@@ -1,0 +1,20 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // /config/auth — PIN familiar
+    // Solo lectura para usuarios autenticados (el cliente lo lee para comparar)
+    // Escritura solo desde la consola de Firebase
+    match /config/{doc} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // /menus — menús semanales
+    // Solo usuarios autenticados (Firebase Auth anónimo)
+    match /menus/{weekId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

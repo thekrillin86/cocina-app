@@ -1,0 +1,275 @@
+{
+  "week": 18,
+  "year": 2026,
+  "dateRange": "27 abr - 1 may",
+  "persons": 4,
+  "days": [
+    {
+      "day": "Lunes",
+      "date": "27 abr",
+      "schedule": "Mañana ocupada · cocinar el domingo noche",
+      "lunch": {
+        "name": "Guiso de sepia con patatas y verduras",
+        "proteins": ["Sepia"],
+        "calories": 480,
+        "notes": null,
+        "recipe": {
+          "method": "Vitro",
+          "ingredients": [
+            "600 g de sepia limpia en trozos",
+            "3 patatas medianas en dados",
+            "2 tomates maduros troceados",
+            "1 pimiento verde en dados",
+            "1 pimiento rojo en dados",
+            "2 zanahorias en rodajas",
+            "2 dientes de ajo picados",
+            "200 ml de vino blanco",
+            "400 ml de caldo de pescado",
+            "Aceite de oliva, sal, pimienta, pimentón y perejil"
+          ],
+          "steps": [
+            "🔧 Método: Vitro (cazuela). Sofríe el ajo. Añade la sepia y dórala 3–4 min.",
+            "Incorpora los pimientos, la zanahoria y el tomate. Sofríe 5 min. Añade el pimentón.",
+            "Vierte el vino y deja evaporar 2 min.",
+            "Añade las patatas y el caldo. Tapa y cocina a fuego bajo 25 min.",
+            "Rectifica de sal y espolvorea perejil. Guarda en la nevera."
+          ]
+        }
+      },
+      "dinner": {
+        "name": "Tiras de ternera salteada con verduras",
+        "proteins": ["Ternera"],
+        "calories": 420,
+        "notes": null,
+        "recipe": {
+          "method": "Vitro",
+          "ingredients": [
+            "500 g de tiras de ternera finas",
+            "2 calabacines en tiras",
+            "1 pimiento rojo en tiras",
+            "1 pimiento verde en tiras",
+            "200 g de champiñones laminados",
+            "2 dientes de ajo picados",
+            "2 cucharadas de salsa de soja",
+            "Aceite de oliva, sal, pimienta y pimentón"
+          ],
+          "steps": [
+            "🔧 Método: Vitro. Saltea el ajo. Añade la ternera y dórala 2–3 min. Retira y reserva.",
+            "En la misma sartén saltea los pimientos, el calabacín y los champiñones 5 min.",
+            "Incorpora la ternera. Añade la soja y saltea todo 1 min más."
+          ]
+        }
+      }
+    },
+    {
+      "day": "Martes",
+      "date": "28 abr",
+      "schedule": "Tarde · cocinar por la mañana",
+      "lunch": {
+        "name": "Ensalada de arroz y pera",
+        "proteins": ["Atún", "Queso"],
+        "calories": 520,
+        "notes": "Hacer el doble → Miércoles",
+        "recipe": {
+          "method": "Sin cocción",
+          "ingredients": [
+            "Juan: 60 g arroz · Magdalena y niños: 35 g → ~165 g total (en crudo)",
+            "2 latas de atún al natural",
+            "2 peras conferencia en dados",
+            "100 g de queso tierno en dados",
+            "Tomates cherry cortados",
+            "Canónigos o rúcula",
+            "3 cucharadas de aceite de oliva virgen extra",
+            "1 cucharada de vinagre de manzana",
+            "1 cucharadita de miel",
+            "Sal y pimienta"
+          ],
+          "steps": [
+            "🔧 Método: Sin cocción (+ cocción arroz). Cuece el arroz en agua con sal. Escurre y deja enfriar.",
+            "Mezcla el arroz frío con el atún, la pera, el queso, los tomatitos y los canónigos.",
+            "Aliña con aceite, vinagre, miel, sal y pimienta justo antes de servir."
+          ]
+        }
+      },
+      "dinner": {
+        "name": "Conejo a la huertana",
+        "proteins": ["Conejo"],
+        "calories": 430,
+        "notes": null,
+        "recipe": {
+          "method": "Thermomix",
+          "ingredients": [
+            "1 conejo troceado (~1.2 kg)",
+            "2 tomates maduros troceados",
+            "1 pimiento rojo en tiras",
+            "1 pimiento verde en tiras",
+            "2 zanahorias en rodajas",
+            "2 dientes de ajo picados",
+            "200 ml de vino blanco",
+            "200 ml de caldo de pollo",
+            "Aceite de oliva, sal, pimienta, pimentón, tomillo y perejil"
+          ],
+          "steps": [
+            "🔧 Método: Thermomix. Sofríe el ajo 3 min / 120°C / vel 1.",
+            "Añade el conejo salpimentado. Dora 5 min / 120°C / giro inverso / vel cuchara.",
+            "Incorpora las verduras, pimentón y tomillo. Cocina 5 min / 100°C / giro inverso / vel cuchara.",
+            "Añade el vino y el caldo. Cocina 25 min / 100°C / giro inverso / vel cuchara.",
+            "Rectifica de sal y espolvorea perejil."
+          ]
+        }
+      }
+    },
+    {
+      "day": "Miércoles",
+      "date": "29 abr",
+      "schedule": "Mañana ocupada · ensalada del martes · víspera escalada",
+      "lunch": {
+        "name": "Ensalada de arroz y pera (del martes)",
+        "proteins": ["Atún", "Queso"],
+        "calories": 520,
+        "notes": "Del día anterior",
+        "recipe": {
+          "method": "Sin cocción",
+          "ingredients": ["La ensalada guardada del martes"],
+          "steps": [
+            "🔧 Método: Sin cocción. Saca de la nevera 10 min antes. Aliña de nuevo si es necesario."
+          ]
+        }
+      },
+      "dinner": {
+        "name": "Merluza a la plancha con verduras salteadas",
+        "proteins": ["Merluza"],
+        "calories": 380,
+        "notes": null,
+        "recipe": {
+          "method": "Plancha",
+          "ingredients": [
+            "Juan: 150 g · Magdalena y niños: 150 g → ~600 g (4 lomos)",
+            "2 calabacines en rodajas",
+            "1 pimiento rojo en tiras",
+            "200 g de espárragos trigueros",
+            "2 dientes de ajo laminados",
+            "Aceite de oliva, sal, pimienta y zumo de limón",
+            "Solo Juan (víspera escalada): arroz hervido o pan integral al gusto"
+          ],
+          "steps": [
+            "🔧 Método: Plancha + Vitro. Saltea las verduras con aceite 5–6 min. Salpimenta y reserva.",
+            "Calienta la plancha. Pinta la merluza con aceite y salpimenta. Cocina 3 min por lado.",
+            "Exprime el limón al retirar. Sirve sobre las verduras.",
+            "Juan puede acompañar con arroz hervido o pan integral."
+          ]
+        }
+      }
+    },
+    {
+      "day": "Jueves",
+      "date": "30 abr",
+      "schedule": "Escalada · 2 adultos en casa al mediodía",
+      "lunch": {
+        "name": "Ensalada de garbanzos con atún y huevo duro",
+        "proteins": ["Garbanzos", "Atún", "Huevo"],
+        "calories": 480,
+        "notes": "Solo 2 personas",
+        "recipe": {
+          "method": "Sin cocción",
+          "ingredients": [
+            "300 g de garbanzos cocidos",
+            "1 lata de atún al natural",
+            "2 huevos cocidos",
+            "Tomates cherry cortados",
+            "Pepino en dados",
+            "Perejil fresco",
+            "Aceite de oliva virgen extra, zumo de limón, sal y comino"
+          ],
+          "steps": [
+            "🔧 Método: Sin cocción. Cuece los huevos 10 min. Enfría, pela y corta en cuartos.",
+            "Mezcla los garbanzos con el atún, los tomatitos, el pepino y el perejil.",
+            "Aliña con aceite, limón, sal y comino. Coloca los huevos encima."
+          ]
+        }
+      },
+      "dinner": {
+        "name": "Ensalada de pollo con mango y aguacate",
+        "proteins": ["Pollo"],
+        "calories": 450,
+        "notes": null,
+        "recipe": {
+          "method": "Plancha",
+          "ingredients": [
+            "Juan: 180 g · Magdalena y niños: 150 g → ~630 g pechuga de pollo",
+            "1 mango maduro en dados",
+            "2 aguacates en dados",
+            "Tomates cherry cortados",
+            "Lechuga variada o canónigos",
+            "Zumo de lima o limón",
+            "Sal, pimienta y aceite de oliva virgen extra"
+          ],
+          "steps": [
+            "🔧 Método: Plancha. Sazona el pollo con sal, pimienta y aceite. Cocina 3–4 min por lado.",
+            "Deja enfriar y corta en tiras.",
+            "Monta la ensalada: lechuga, tomatitos, mango y aguacate.",
+            "Coloca el pollo encima. Aliña con aceite, lima, sal y pimienta."
+          ]
+        }
+      }
+    },
+    {
+      "day": "Viernes",
+      "date": "1 may",
+      "schedule": "Festivo · cocinar con tranquilidad",
+      "lunch": {
+        "name": "Pollo pizzaiola con pasta fresca",
+        "proteins": ["Pollo"],
+        "calories": 680,
+        "notes": null,
+        "recipe": {
+          "method": "Vitro",
+          "ingredients": [
+            "Juan: 180 g · Magdalena y niños: 150 g → ~630 g pechuga en filetes",
+            "Juan: 60 g pasta · Magdalena y niños: 35 g → ~165 g pasta fresca (en crudo)",
+            "400 ml de tomate triturado",
+            "2 dientes de ajo picados",
+            "100 g de aceitunas negras en rodajas",
+            "1 cucharadita de alcaparras",
+            "1 pimiento rojo en tiras",
+            "Aceite, sal, pimienta, orégano y albahaca fresca",
+            "Queso parmesano rallado"
+          ],
+          "steps": [
+            "🔧 Método: Vitro. Dora los filetes de pollo 3 min por lado. Retira y reserva.",
+            "Sofríe el ajo y el pimiento 3 min. Añade el tomate, orégano, aceitunas y alcaparras. Cocina 10 min.",
+            "Incorpora el pollo a la salsa. Cocina 5 min más.",
+            "Cuece la pasta fresca 2–3 min. Escurre.",
+            "Sirve la pasta con el pollo pizzaiola encima. Espolvorea parmesano y albahaca."
+          ]
+        }
+      },
+      "dinner": {
+        "name": "Huevo al horno con espirales de verduras",
+        "proteins": ["Huevos"],
+        "calories": 380,
+        "notes": null,
+        "recipe": {
+          "method": "Horno",
+          "ingredients": [
+            "Juan: 2 huevos · Magdalena y niños: 1 huevo → 5 huevos total",
+            "3 calabacines grandes (espirales con pelador)",
+            "2 zanahorias grandes (espirales)",
+            "2 dientes de ajo picados",
+            "200 ml de tomate frito",
+            "Aceite de oliva, sal, pimienta y orégano",
+            "Queso rallado (opcional)"
+          ],
+          "steps": [
+            "🔧 Método: Horno + Vitro. Precalienta el horno a 190°C.",
+            "Haz espirales de calabacín y zanahoria con pelador o espiralizador.",
+            "Saltea el ajo 1 min. Añade las espirales y saltea 3 min. Salpimenta.",
+            "Reparte en cazuelitas o fuente. Cubre con tomate frito.",
+            "Casca los huevos encima. Espolvorea orégano y queso.",
+            "Hornea 8–10 min hasta que la clara esté cuajada."
+          ]
+        }
+      }
+    }
+  ]
+}

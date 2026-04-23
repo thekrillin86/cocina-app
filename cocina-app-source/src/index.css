@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-cream-100 text-ink-900 font-sans antialiased;
+    font-feature-settings: 'ss01', 'ss02';
+    overscroll-behavior-y: contain;
+  }
+
+  /* Mejor renderizado del serif */
+  h1, h2, h3, h4, .font-display {
+    font-feature-settings: 'ss01';
+    letter-spacing: -0.015em;
+  }
+
+  /* Safe area para iPhone */
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+@layer components {
+  .label-caps {
+    @apply uppercase tracking-[0.18em] text-xs font-semibold;
+  }
+
+  .btn-primary {
+    @apply bg-terracotta-500 text-cream-50 px-5 py-3 rounded-full font-medium
+           active:bg-terracotta-600 transition-colors;
+  }
+
+  .btn-ghost {
+    @apply text-ink-700 px-4 py-2 rounded-full font-medium
+           active:bg-cream-200 transition-colors;
+  }
+
+  .card {
+    @apply bg-cream-50 rounded-3xl shadow-card;
+  }
+
+  .input {
+    @apply w-full bg-cream-100 border border-cream-300 rounded-2xl px-4 py-3
+           text-ink-900 placeholder-ink-500/50
+           focus:outline-none focus:border-terracotta-500 focus:bg-cream-50
+           transition-colors;
+  }
+}
+
+/* Animación sutil al entrar */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fadeInUp 0.3s ease-out;
+}
+
+/* Ocultar scrollbar en navegación horizontal */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
