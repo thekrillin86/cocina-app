@@ -4,8 +4,11 @@ import {
   doc,
   setDoc,
   updateDoc,
+  deleteDoc,
   onSnapshot,
   query,
+  orderBy,
+  serverTimestamp,
 } from 'firebase/firestore'
 import { db } from './firebase'
 import { AuthGate } from './AuthGate'
@@ -37,6 +40,84 @@ function formatProteins(value) {
   if (!value) return ''
   if (Array.isArray(value)) return value.join(' + ')
   return String(value)
+}
+
+/* ============================================================
+   HELPERS DE LISTA DE LA COMPRA
+   ============================================================ */
+
+const SHOPPING_CATEGORIES = [
+  'Proteínas',
+  'Lácteos',
+  'Verduras y frutas',
+  'Despensa',
+  'Otros',
+]
+
+const CATEGORY_KEYWORDS = {
+  'Proteínas': ['pollo', 'ternera', 'pavo', 'cerdo', 'salm', 'merluza', 'bacalao', 'dorada', 'lubina', 'atún', 'atun', 'sepia', 'pulpo', 'gamba', 'conejo', 'huevo', 'jamón', 'jamon', 'rape', 'pescado', 'solomillo', 'contramuslo', 'carne'],
+  'Lácteos': ['leche', 'yogur', 'queso', 'nata', 'mantequilla', 'mozzarella', 'parmesano', 'ricotta'],
+  'Verduras y frutas': ['calabac', 'zanahoria', 'cebolla', 'pimiento', 'tomate', 'lechuga', 'espinaca', 'champi', 'espárrago', 'esparra', 'rúcula', 'rucula', 'canónigo', 'canonigo', 'patata', 'pepino', 'ajo', 'apio', 'judía', 'judia', 'mango', 'aguacate', 'manzana', 'pera', 'uva', 'limón', 'limon', 'lima', 'piña', 'pina', 'naranja', 'perejil', 'albahaca', 'cebolleta', 'puerro', 'boniato', 'castaña', 'castana', 'aceituna', 'alcaparra', 'guisante', 'fruta', 'verdura', 'tomatito', 'cherry'],
+  'Despensa': ['arroz', 'pasta', 'lenteja', 'garbanzo', 'quinoa', 'harina', 'aceite', 'vinagre', 'sal', 'pimienta', 'pimentón', 'pimenton', 'orégano', 'oregano', 'tomillo', 'comino', 'soja', 'caldo', 'tomate frito', 'tomate triturado', 'pan', 'tortilla', 'nuez moscada', 'miel', 'vino', 'eneldo', 'frutos secos', 'almendra', 'piñon', 'pinon', 'macarrones', 'espagueti', 'azúcar', 'azucar', 'sirope', 'mostaza', 'ketchup', 'mayonesa'],
+}
+
+function categorizeIngredient(name) {
+  if (!name) return 'Otros'
+  const normalized = String(name).toLowerCase().trim()
+  for (const category of SHOPPING_CATEGORIES) {
+    const keywords = CATEGORY_KEYWORDS[category] || []
+    if (keywords.some((kw) => normalized.includes(kw))) {
+      return category
+    }
+  }
+  return 'Otros'
+}
+
+// Parsea una línea de ingrediente de receta en uno o varios productos limpios
+function parseIngredientLine(line) {
+  if (!line) return []
+  let cleaned = String(line).trim()
+
+  // Si tiene "→", quedarse con lo posterior (cantidad final consolidada)
+  if (cleaned.includes('→')) {
+    const after = cleaned.split('→').slice(-1)[0] || ''
+    cleaned = after.replace(/\([^)]*\)/g, '').trim()
+  }
+
+  // Quitar cantidades iniciales: "300 g de", "2 cucharadas de", "1 lata de", etc.
+  cleaned = cleaned.replace(
+    /^[~]?\s*[\d.,/]+\s*(g|gr|gramos?|ml|l|kg|cucharadas?|cdas?|cucharaditas?|cdtas?|dientes?|botes?|lomos?|filetes?|huevos?|latas?|unidades?|ud|uds|ramas?|hojas?|piezas?)\s*(de\s+)?/i,
+    ''
+  )
+
+  // Quitar "1 ", "2 " al inicio cuando es un contador simple
+  cleaned = cleaned.replace(/^[\d.,/]+\s+/, '')
+
+  // Quitar preparaciones culinarias
+  cleaned = cleaned.replace(
+    /\s+(en|cortado en|partido en)\s+(rodajas?|tiras?|dados?|láminas?|laminas?|cuartos?|polvo|trozos?|filetes?|gajos?|juliana|brunoise).*$/i,
+    ''
+  )
+  cleaned = cleaned.replace(
+    /\s+(picados?|laminados?|troceados?|cortados?|rallados?|maduros?|frescos?|secos?|en\s+conserva|al\s+natural|cocidos?|hervidos?|crudo|crudos?|peladas?|limpias?|enteros?)\b.*$/i,
+    ''
+  )
+
+  // Quitar paréntesis residuales
+  cleaned = cleaned.replace(/\([^)]*\)/g, '').trim()
+
+  // Si quedan separadores tipo "sal, pimienta y aceite" → varios items
+  let parts = cleaned.split(/,|\s+y\s+/i)
+  parts = parts.map((p) => p.trim()).filter((p) => p.length > 1)
+
+  // Capitalizar primera letra de cada parte
+  parts = parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+
+  return parts
+}
+
+function generateItemId() {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
 }
 
 /* ============================================================
@@ -247,6 +328,8 @@ function MainApp() {
           />
         )}
         {view === 'stats' && <StatsView />}
+        {view === 'recipes' && <RecipesView />}
+        {view === 'shopping' && <ShoppingView todayWeekId={today.id} />}
         {view === 'history' && (
           <HistoryView
             onOpen={(wid) => {
@@ -276,13 +359,15 @@ function BottomNav({ view, setView }) {
   const items = [
     { id: 'today', label: 'Hoy', icon: IconToday },
     { id: 'week', label: 'Semana', icon: IconWeek },
+    { id: 'recipes', label: 'Recetas', icon: IconRecipes },
+    { id: 'shopping', label: 'Compra', icon: IconShopping },
     { id: 'stats', label: 'Stats', icon: IconStats },
     { id: 'history', label: 'Histórico', icon: IconHistory },
     { id: 'import', label: 'Importar', icon: IconImport },
   ]
   return (
     <nav className="fixed bottom-0 inset-x-0 bg-cream-50/95 backdrop-blur border-t border-cream-300 safe-bottom z-40">
-      <div className="flex justify-around px-2 pt-2 pb-1">
+      <div className="flex justify-around px-1 pt-2 pb-1 no-scrollbar overflow-x-auto">
         {items.map((it) => {
           const Icon = it.icon
           const active = view === it.id
@@ -290,7 +375,7 @@ function BottomNav({ view, setView }) {
             <button
               key={it.id}
               onClick={() => setView(it.id)}
-              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-colors ${
+              className={`flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-2xl transition-colors shrink-0 ${
                 active ? 'text-terracotta-600' : 'text-ink-500'
               }`}
             >
@@ -864,6 +949,761 @@ function Field({ label, required, children }) {
 }
 
 /* ============================================================
+   VISTA: RECETAS (catálogo)
+   ============================================================ */
+
+function RecipesView() {
+  const { menus, loading } = useAllMenus()
+  const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState(null)
+
+  const recipes = useMemo(() => {
+    const map = new Map()
+    for (const m of menus) {
+      for (const d of m.days || []) {
+        for (const type of ['lunch', 'dinner']) {
+          const meal = d[type]
+          if (meal && meal.name && !map.has(meal.name)) {
+            map.set(meal.name, {
+              name: meal.name,
+              proteins: meal.proteins || null,
+              calories: meal.calories || null,
+              recipe: meal.recipe || null,
+            })
+          }
+        }
+      }
+    }
+    let list = Array.from(map.values())
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      list = list.filter((r) =>
+        r.name.toLowerCase().includes(q) ||
+        formatProteins(r.proteins).toLowerCase().includes(q)
+      )
+    }
+    list.sort((a, b) => a.name.localeCompare(b.name, 'es'))
+    return list
+  }, [menus, search])
+
+  if (loading) return <Loading />
+
+  return (
+    <div className="animate-fade-in-up">
+      <Header />
+      <div className="px-6">
+        <h1 className="font-display text-3xl text-ink-900 mb-1">Recetas</h1>
+        <p className="text-sm text-ink-500 mb-5">
+          {recipes.length} platos en tu repertorio
+        </p>
+
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar plato o proteína…"
+          className="input mb-5"
+        />
+
+        {!recipes.length ? (
+          <EmptyState
+            title={menus.length ? 'Sin resultados' : 'Sin menús importados'}
+            hint={menus.length ? 'Prueba con otro término.' : 'Importa algún menú para empezar.'}
+          />
+        ) : (
+          <div className="space-y-2 pb-4">
+            {recipes.map((r) => (
+              <button
+                key={r.name}
+                onClick={() => setSelected(r)}
+                className="card w-full text-left p-4 active:bg-cream-200"
+              >
+                <p className="font-display text-lg text-ink-900">{r.name}</p>
+                <div className="flex gap-3 mt-1 text-xs text-ink-500">
+                  {r.proteins && <span>🥩 {formatProteins(r.proteins)}</span>}
+                  {r.calories && <span>🔥 {r.calories} kcal</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selected && (
+        <RecipeModal recipe={selected} onClose={() => setSelected(null)} />
+      )}
+    </div>
+  )
+}
+
+function RecipeModal({ recipe, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-cream-50 w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] overflow-y-auto safe-bottom">
+        <div className="sticky top-0 bg-cream-50 border-b border-cream-200 px-5 py-4 flex items-center justify-between">
+          <button onClick={onClose} className="text-ink-500 text-sm font-medium">
+            Cerrar
+          </button>
+          <p className="font-display text-base text-ink-900 text-center flex-1 px-2 truncate">
+            {recipe.name}
+          </p>
+          <div className="w-12" />
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {recipe.proteins && (
+              <span className="bg-sage-100 text-sage-700 text-xs px-3 py-1 rounded-full font-medium">
+                🥩 {formatProteins(recipe.proteins)}
+              </span>
+            )}
+            {recipe.calories && (
+              <span className="bg-terracotta-50 text-terracotta-700 text-xs px-3 py-1 rounded-full font-medium">
+                🔥 {recipe.calories} kcal
+              </span>
+            )}
+          </div>
+
+          {recipe.recipe ? (
+            <>
+              {recipe.recipe.method && (
+                <div>
+                  <p className="label-caps text-sage-700 mb-1.5">Método</p>
+                  <p className="text-ink-700">{recipe.recipe.method}</p>
+                </div>
+              )}
+              {recipe.recipe.ingredients && (
+                <div>
+                  <p className="label-caps text-sage-700 mb-1.5">Ingredientes</p>
+                  <div className="text-ink-700 whitespace-pre-line leading-relaxed text-sm">
+                    {asMultiline(recipe.recipe.ingredients)}
+                  </div>
+                </div>
+              )}
+              {recipe.recipe.steps && (
+                <div>
+                  <p className="label-caps text-sage-700 mb-1.5">Pasos</p>
+                  <div className="text-ink-700 whitespace-pre-line leading-relaxed text-sm">
+                    {asMultiline(recipe.recipe.steps)}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-ink-500 italic">Sin receta detallada guardada.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
+   VISTA: COMPRA (listas de la compra)
+   ============================================================ */
+
+// Categorización por palabras clave
+const CATEGORIES = [
+  { key: 'proteinas', label: 'Proteínas', keywords: ['pollo', 'ternera', 'pavo', 'conejo', 'cerdo', 'salmón', 'salmon', 'merluza', 'bacalao', 'dorada', 'lubina', 'sepia', 'calamar', 'gambas', 'atún', 'atun', 'pulpo', 'jamón', 'jamon', 'lomo', 'carne', 'pescado', 'rape', 'mariscos', 'mejillones', 'almejas'] },
+  { key: 'lacteos', label: 'Lácteos y huevos', keywords: ['huevo', 'leche', 'queso', 'mozzarella', 'ricotta', 'yogur', 'mantequilla', 'nata', 'batido', 'parmesano', 'manchego', 'feta'] },
+  { key: 'verduras', label: 'Verduras', keywords: ['calabacín', 'calabacin', 'pimiento', 'tomate', 'ajo', 'lechuga', 'cebolla', 'zanahoria', 'pepino', 'espinaca', 'espárrago', 'esparrago', 'champiñón', 'champiñon', 'champinon', 'brócoli', 'brocoli', 'coliflor', 'judía', 'judia', 'alcachofa', 'perejil', 'albahaca', 'cilantro', 'canónigo', 'canonigo', 'rúcula', 'rucula', 'patata', 'boniato', 'apio', 'puerro', 'rábano', 'rabano', 'remolacha', 'aguacate'] },
+  { key: 'frutas', label: 'Frutas', keywords: ['limón', 'limon', 'manzana', 'pera', 'naranja', 'lima', 'uva', 'mango', 'plátano', 'platano', 'fresa', 'melón', 'melon', 'sandía', 'sandia', 'piña', 'pina', 'kiwi', 'frambuesa', 'arándano'] },
+  { key: 'despensa', label: 'Despensa', keywords: ['arroz', 'pasta', 'quinoa', 'harina', 'aceite', 'vinagre', 'sal', 'pimienta', 'pimentón', 'pimenton', 'orégano', 'oregano', 'comino', 'curry', 'azúcar', 'azucar', 'soja', 'miel', 'lentejas', 'garbanzos', 'alubias', 'frijoles', 'aceitunas', 'alcaparras', 'mostaza', 'caldo', 'tomate triturado', 'tomate frito', 'eneldo', 'tomillo', 'romero', 'laurel', 'nuez moscada', 'almendras', 'castañas', 'castanas', 'frutos secos'] },
+  { key: 'panaderia', label: 'Panadería', keywords: ['pan', 'tortilla', 'hojaldre', 'baguette', 'biscote', 'pita'] },
+  { key: 'bebidas', label: 'Bebidas', keywords: ['vino', 'cerveza', 'agua', 'zumo', 'refresco'] },
+]
+
+function categorize(name) {
+  const lower = name.toLowerCase()
+  for (const cat of CATEGORIES) {
+    if (cat.keywords.some((k) => lower.includes(k))) return cat.key
+  }
+  return 'otros'
+}
+
+// Limpia un ingrediente bruto a producto de lista de compra
+function cleanIngredient(raw) {
+  if (!raw || typeof raw !== 'string') return null
+  let text = raw.trim()
+
+  // Saltar las líneas de porciones de Juan/Magdalena
+  if (/Juan:|Magdalena|niños:|niños y/i.test(text)) {
+    // Intentar extraer el alimento si está al inicio: "Juan: 160 g · ... → ~580 g de salmón (4 lomos)"
+    const m = text.match(/de\s+([^\(→]+)/i)
+    if (m) text = m[1].trim()
+    else return null
+  }
+
+  // Quitar texto entre paréntesis
+  text = text.replace(/\([^)]*\)/g, '').trim()
+  // Quitar al final puntos
+  text = text.replace(/\.+$/, '').trim()
+
+  // Quitar cantidades del principio (200 g, 1 kg, 3 dientes, etc.)
+  text = text.replace(/^[\d,.½¼¾\s]+(g|kg|ml|l|cl|cucharad[ao]s?|cucharaditas?|pizca|dientes?|filetes?|lomos?|hojas?|trozos?|láminas?|laminas?|rodajas?|botes?|latas?|paquetes?|sobres?|ramas?|hojitas?|huevos?|piezas?|unidades?)\s+(de\s+)?/i, '')
+  // Cantidad simple "1 limón", "2 zanahorias"
+  text = text.replace(/^[\d,.½¼¾\s]+\s+/i, '')
+
+  // Quitar adjetivos/participios típicos
+  const stripAdj = [
+    'picad[oa]s?', 'lamina[oda]s?', 'ralla[oda]s?', 'troce[oada]s?', 'cocid[oa]s?',
+    'fresc[oa]s?', 'maduros?', 'limpi[oa] en trozos', 'en dados', 'en tiras',
+    'en rodajas', 'en láminas', 'en laminas', 'en cuartos', 'en juliana',
+    'al natural', 'al gusto', 'en aceite', 'sin pepitas', 'sin piel',
+    'sin hueso', 'desmenuzad[oa]', 'rallad[oa]'
+  ]
+  for (const a of stripAdj) {
+    text = text.replace(new RegExp(',?\\s*\\b' + a + '\\b', 'gi'), '')
+  }
+
+  text = text.replace(/\s+/g, ' ').trim()
+  text = text.replace(/^[,.\s]+|[,.\s]+$/g, '').trim()
+
+  if (text.length < 2) return null
+  if (/^aliño|^aderezo|^salsa$/i.test(text)) return null
+
+  // Capitalizar
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+// Extrae items a partir de un menú
+function extractItemsFromMenu(menu) {
+  if (!menu || !menu.days) return []
+  const seen = new Map()
+  for (const d of menu.days) {
+    for (const type of ['lunch', 'dinner']) {
+      const meal = d[type]
+      if (!meal || !meal.recipe) continue
+      const ings = meal.recipe.ingredients
+      if (!ings) continue
+      const arr = Array.isArray(ings) ? ings : String(ings).split('\n')
+      for (const raw of arr) {
+        // Una línea puede tener varios items separados por coma (sal, pimienta, etc.)
+        const subItems = raw.split(/,| y /i)
+        for (const sub of subItems) {
+          const clean = cleanIngredient(sub)
+          if (!clean) continue
+          const key = clean.toLowerCase()
+          if (!seen.has(key)) {
+            seen.set(key, {
+              id: 'auto_' + key.replace(/\s+/g, '_'),
+              name: clean,
+              category: categorize(clean),
+              checked: false,
+            })
+          }
+        }
+      }
+    }
+  }
+  return Array.from(seen.values())
+}
+
+// Hooks/operaciones de listas en Firestore
+function useShoppingLists() {
+  const [lists, setLists] = useState([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, 'shopping-lists')),
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+        list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'))
+        setLists(list)
+        setLoading(false)
+      },
+      () => setLoading(false)
+    )
+    return unsub
+  }, [])
+  return { lists, loading }
+}
+
+async function createShoppingList(name) {
+  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'lista-' + Date.now()
+  await setDoc(doc(db, 'shopping-lists', id), {
+    name,
+    items: [],
+    createdAt: new Date().toISOString(),
+  })
+  return id
+}
+
+async function updateShoppingList(listId, items) {
+  await updateDoc(doc(db, 'shopping-lists', listId), { items })
+}
+
+async function deleteShoppingList(listId) {
+  await deleteDoc(doc(db, 'shopping-lists', listId))
+}
+
+function ShoppingView({ todayWeekId }) {
+  const { lists, loading } = useShoppingLists()
+  const [activeListId, setActiveListId] = useState(null)
+  const [showAdd, setShowAdd] = useState(false)
+  const [showNewList, setShowNewList] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+
+  // Activar la primera lista por defecto
+  useEffect(() => {
+    if (!activeListId && lists.length) setActiveListId(lists[0].id)
+  }, [lists, activeListId])
+
+  if (loading) return <Loading />
+
+  const activeList = lists.find((l) => l.id === activeListId)
+
+  return (
+    <div className="animate-fade-in-up">
+      <Header />
+      <div className="px-6">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="font-display text-3xl text-ink-900">Compra</h1>
+          <button
+            onClick={() => setShowNewList(true)}
+            className="text-terracotta-600 text-sm font-medium"
+          >
+            + Lista
+          </button>
+        </div>
+
+        {!lists.length ? (
+          <EmptyState
+            title="Sin listas de compra"
+            hint="Crea tu primera lista (ej. Lidl, Mercadona, Carrefour)."
+          />
+        ) : (
+          <>
+            {/* Selector de lista (pills horizontales) */}
+            <div className="flex gap-2 mb-5 overflow-x-auto no-scrollbar -mx-2 px-2">
+              {lists.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => setActiveListId(l.id)}
+                  className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                    l.id === activeListId
+                      ? 'bg-terracotta-500 text-cream-50'
+                      : 'bg-cream-200 text-ink-700'
+                  }`}
+                >
+                  {l.name}
+                </button>
+              ))}
+            </div>
+
+            {activeList && (
+              <ShoppingListContent
+                list={activeList}
+                todayWeekId={todayWeekId}
+                onShowAdd={() => setShowAdd(true)}
+                onShowImport={() => setShowImport(true)}
+              />
+            )}
+          </>
+        )}
+      </div>
+
+      {showNewList && (
+        <NewListModal
+          onClose={() => setShowNewList(false)}
+          onCreated={(id) => {
+            setActiveListId(id)
+            setShowNewList(false)
+          }}
+        />
+      )}
+      {showAdd && activeList && (
+        <AddItemModal
+          list={activeList}
+          onClose={() => setShowAdd(false)}
+        />
+      )}
+      {showImport && activeList && (
+        <ImportMenuModal
+          list={activeList}
+          todayWeekId={todayWeekId}
+          onClose={() => setShowImport(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
+  const items = list.items || []
+
+  // Agrupar por categoría
+  const byCategory = useMemo(() => {
+    const groups = {}
+    for (const it of items) {
+      const cat = it.category || 'otros'
+      if (!groups[cat]) groups[cat] = []
+      groups[cat].push(it)
+    }
+    return groups
+  }, [items])
+
+  const categoryOrder = [...CATEGORIES.map((c) => c.key), 'otros']
+  const categoryLabels = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]))
+  categoryLabels.otros = 'Otros'
+
+  const totalChecked = items.filter((i) => i.checked).length
+
+  async function toggleItem(id) {
+    const newItems = items.map((it) =>
+      it.id === id ? { ...it, checked: !it.checked } : it
+    )
+    await updateShoppingList(list.id, newItems)
+  }
+
+  async function deleteItem(id) {
+    const newItems = items.filter((it) => it.id !== id)
+    await updateShoppingList(list.id, newItems)
+  }
+
+  async function clearChecked() {
+    if (!confirm('¿Borrar todos los items marcados?')) return
+    const newItems = items.filter((it) => !it.checked)
+    await updateShoppingList(list.id, newItems)
+  }
+
+  async function clearAll() {
+    if (!confirm('¿Vaciar toda la lista?')) return
+    await updateShoppingList(list.id, [])
+  }
+
+  return (
+    <>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm text-ink-500">
+          {items.length} items {totalChecked > 0 && `· ${totalChecked} marcados`}
+        </p>
+        <div className="flex gap-2">
+          {totalChecked > 0 && (
+            <button
+              onClick={clearChecked}
+              className="text-xs text-ink-500 font-medium"
+            >
+              Borrar marcados
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex gap-2 mb-5">
+        <button onClick={onShowAdd} className="flex-1 btn-primary text-sm py-2.5">
+          + Añadir producto
+        </button>
+        <button
+          onClick={onShowImport}
+          className="px-4 py-2.5 rounded-full bg-sage-100 text-sage-700 text-sm font-medium active:bg-sage-300"
+        >
+          🍽️ Del menú
+        </button>
+      </div>
+
+      {!items.length ? (
+        <EmptyState
+          title="Lista vacía"
+          hint='Añade productos manualmente o pulsa "Del menú" para importar los ingredientes de la semana.'
+        />
+      ) : (
+        <div className="space-y-5 pb-8">
+          {categoryOrder.map((cat) => {
+            const its = byCategory[cat]
+            if (!its || !its.length) return null
+            return (
+              <div key={cat}>
+                <p className="label-caps text-sage-700 mb-2">
+                  {categoryLabels[cat] || cat}
+                </p>
+                <div className="space-y-1.5">
+                  {its.map((it) => (
+                    <ShoppingItem
+                      key={it.id}
+                      item={it}
+                      onToggle={() => toggleItem(it.id)}
+                      onDelete={() => deleteItem(it.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+
+          {items.length > 0 && (
+            <button
+              onClick={clearAll}
+              className="w-full py-3 text-terracotta-700 text-sm font-medium border border-terracotta-300 rounded-2xl mt-4 active:bg-terracotta-50"
+            >
+              Vaciar lista entera
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  )
+}
+
+function ShoppingItem({ item, onToggle, onDelete }) {
+  return (
+    <div className="card flex items-center gap-3 px-4 py-3">
+      <button
+        onClick={onToggle}
+        className={`shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+          item.checked
+            ? 'bg-terracotta-500 border-terracotta-500'
+            : 'border-cream-400'
+        }`}
+      >
+        {item.checked && (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M5 12l5 5L20 7" stroke="#FDFBF7" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+      <div className="flex-1 min-w-0">
+        <p className={`text-ink-900 ${item.checked ? 'line-through text-ink-500' : ''}`}>
+          {item.name}
+        </p>
+        {item.quantity && (
+          <p className="text-xs text-ink-500">{item.quantity}</p>
+        )}
+      </div>
+      <button onClick={onDelete} className="shrink-0 text-ink-500 text-lg px-2">
+        ×
+      </button>
+    </div>
+  )
+}
+
+function NewListModal({ onClose, onCreated }) {
+  const [name, setName] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  async function handleCreate() {
+    if (!name.trim()) return
+    setCreating(true)
+    try {
+      const id = await createShoppingList(name.trim())
+      onCreated(id)
+    } catch (e) {
+      alert('Error: ' + e.message)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-cream-50 w-full max-w-md rounded-t-3xl sm:rounded-3xl safe-bottom">
+        <div className="border-b border-cream-200 px-5 py-4 flex items-center justify-between">
+          <button onClick={onClose} className="text-ink-500 text-sm font-medium">
+            Cancelar
+          </button>
+          <p className="font-display text-lg">Nueva lista</p>
+          <div className="w-12" />
+        </div>
+        <div className="p-5 space-y-3">
+          <Field label="Nombre" required>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ej: Lidl, Mercadona, Carrefour..."
+              autoFocus
+              className="input"
+            />
+          </Field>
+          <button
+            onClick={handleCreate}
+            disabled={!name.trim() || creating}
+            className="btn-primary w-full disabled:opacity-40"
+          >
+            {creating ? 'Creando…' : 'Crear lista'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AddItemModal({ list, onClose }) {
+  const [name, setName] = useState('')
+  const [quantity, setQuantity] = useState('')
+  const [category, setCategory] = useState('otros')
+  const [saving, setSaving] = useState(false)
+
+  async function handleAdd() {
+    if (!name.trim()) return
+    setSaving(true)
+    try {
+      const newItem = {
+        id: 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        name: name.trim(),
+        category,
+        checked: false,
+        quantity: quantity.trim() || null,
+      }
+      await updateShoppingList(list.id, [...(list.items || []), newItem])
+      onClose()
+    } catch (e) {
+      alert('Error: ' + e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Auto-categorizar mientras escribe
+  useEffect(() => {
+    if (name.trim()) {
+      const cat = categorize(name)
+      if (cat !== 'otros') setCategory(cat)
+    }
+  }, [name])
+
+  return (
+    <div className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-cream-50 w-full max-w-md rounded-t-3xl sm:rounded-3xl safe-bottom max-h-[92vh] overflow-y-auto">
+        <div className="sticky top-0 bg-cream-50 border-b border-cream-200 px-5 py-4 flex items-center justify-between">
+          <button onClick={onClose} className="text-ink-500 text-sm font-medium">
+            Cancelar
+          </button>
+          <p className="font-display text-lg">Añadir a {list.name}</p>
+          <div className="w-12" />
+        </div>
+        <div className="p-5 space-y-3">
+          <Field label="Producto" required>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ej: Salmón fresco"
+              autoFocus
+              className="input"
+            />
+          </Field>
+          <Field label="Cantidad (opcional)">
+            <input
+              type="text"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              placeholder="Ej: 4 lomos, 500 g, 2 piezas"
+              className="input"
+            />
+          </Field>
+          <Field label="Categoría">
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="input"
+            >
+              {CATEGORIES.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+              <option value="otros">Otros</option>
+            </select>
+          </Field>
+          <button
+            onClick={handleAdd}
+            disabled={!name.trim() || saving}
+            className="btn-primary w-full disabled:opacity-40"
+          >
+            {saving ? 'Añadiendo…' : 'Añadir a la lista'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ImportMenuModal({ list, todayWeekId, onClose }) {
+  const { menus } = useAllMenus()
+  const [selectedWeek, setSelectedWeek] = useState(todayWeekId)
+  const [importing, setImporting] = useState(false)
+
+  const menu = menus.find((m) => m.id === selectedWeek)
+  const previewItems = useMemo(() => (menu ? extractItemsFromMenu(menu) : []), [menu])
+
+  async function handleImport() {
+    if (!menu) return
+    setImporting(true)
+    try {
+      const existing = list.items || []
+      const existingNames = new Set(existing.map((i) => i.name.toLowerCase()))
+      const newOnes = previewItems.filter(
+        (it) => !existingNames.has(it.name.toLowerCase())
+      )
+      await updateShoppingList(list.id, [...existing, ...newOnes])
+      onClose()
+    } catch (e) {
+      alert('Error: ' + e.message)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-cream-50 w-full max-w-md rounded-t-3xl sm:rounded-3xl safe-bottom max-h-[92vh] overflow-y-auto">
+        <div className="sticky top-0 bg-cream-50 border-b border-cream-200 px-5 py-4 flex items-center justify-between">
+          <button onClick={onClose} className="text-ink-500 text-sm font-medium">
+            Cancelar
+          </button>
+          <p className="font-display text-lg">Importar del menú</p>
+          <div className="w-12" />
+        </div>
+        <div className="p-5 space-y-4">
+          <Field label="Semana">
+            <select
+              value={selectedWeek}
+              onChange={(e) => setSelectedWeek(e.target.value)}
+              className="input"
+            >
+              {menus.map((m) => (
+                <option key={m.id} value={m.id}>
+                  Semana {m.week} · {m.year} {m.id === todayWeekId ? '(actual)' : ''}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          {!menu ? (
+            <p className="text-sm text-ink-500 italic">No hay menú seleccionado.</p>
+          ) : (
+            <>
+              <p className="text-sm text-ink-500">
+                Se importarán <strong>{previewItems.length}</strong> productos a "{list.name}".
+                Los duplicados se omiten.
+              </p>
+              <div className="max-h-60 overflow-y-auto bg-cream-100 rounded-2xl p-3 text-xs text-ink-700 space-y-0.5">
+                {previewItems.slice(0, 30).map((it) => (
+                  <p key={it.id}>· {it.name}</p>
+                ))}
+                {previewItems.length > 30 && (
+                  <p className="italic text-ink-500 mt-1">
+                    …y {previewItems.length - 30} más
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={handleImport}
+                disabled={importing || !previewItems.length}
+                className="btn-primary w-full disabled:opacity-40"
+              >
+                {importing ? 'Importando…' : `Importar ${previewItems.length} productos`}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
    VISTA: ESTADÍSTICAS
    ============================================================ */
 
@@ -1259,6 +2099,22 @@ function IconImport() {
   return (
     <svg {...iconProps}>
       <path d="M12 3v13M7 11l5 5 5-5M5 21h14" />
+    </svg>
+  )
+}
+function IconRecipes() {
+  return (
+    <svg {...iconProps}>
+      <path d="M5 4h14a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" />
+      <path d="M9 4v3M8 11h8M8 15h6" />
+    </svg>
+  )
+}
+function IconShopping() {
+  return (
+    <svg {...iconProps}>
+      <path d="M5 8h14l-1.5 10.5a2 2 0 0 1-2 1.5h-7a2 2 0 0 1-2-1.5L5 8z" />
+      <path d="M9 8V6a3 3 0 0 1 6 0v2" />
     </svg>
   )
 }
