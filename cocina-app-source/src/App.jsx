@@ -1602,14 +1602,13 @@ function categorize(name) {
   return 'otros'
 }
 
-// Limpia un ingrediente bruto a producto de lista de compra
-function cleanIngredient(raw) {
+// Parsea un ingrediente bruto devolviendo { name, quantity } o null
+function parseIngredient(raw) {
   if (!raw || typeof raw !== 'string') return null
   let text = raw.trim()
 
   // Saltar las líneas de porciones de Juan/Magdalena
   if (/Juan:|Magdalena|niños:|niños y/i.test(text)) {
-    // Intentar extraer el alimento si está al inicio: "Juan: 160 g · ... → ~580 g de salmón (4 lomos)"
     const m = text.match(/de\s+([^\(→]+)/i)
     if (m) text = m[1].trim()
     else return null
@@ -1617,13 +1616,24 @@ function cleanIngredient(raw) {
 
   // Quitar texto entre paréntesis
   text = text.replace(/\([^)]*\)/g, '').trim()
-  // Quitar al final puntos
   text = text.replace(/\.+$/, '').trim()
 
-  // Quitar cantidades del principio (200 g, 1 kg, 3 dientes, etc.)
-  text = text.replace(/^[\d,.½¼¾\s]+(g|kg|ml|l|cl|cucharad[ao]s?|cucharaditas?|pizca|dientes?|filetes?|lomos?|hojas?|trozos?|láminas?|laminas?|rodajas?|botes?|latas?|paquetes?|sobres?|ramas?|hojitas?|huevos?|piezas?|unidades?)\s+(de\s+)?/i, '')
-  // Cantidad simple "1 limón", "2 zanahorias"
-  text = text.replace(/^[\d,.½¼¾\s]+\s+/i, '')
+  // Extraer la cantidad del principio
+  let quantity = null
+  const qtyMatch = text.match(
+    /^([\d,.½¼¾\s]+(g|kg|ml|l|cl|cucharad[ao]s?|cucharaditas?|pizca|dientes?|filetes?|lomos?|hojas?|trozos?|láminas?|laminas?|rodajas?|botes?|latas?|paquetes?|sobres?|ramas?|hojitas?|huevos?|piezas?|unidades?)\s*(?:de\s+)?)/i
+  )
+  if (qtyMatch) {
+    quantity = qtyMatch[1].trim()
+    text = text.slice(qtyMatch[0].length).trim()
+  } else {
+    // Cantidad simple: "1 limón", "2 zanahorias"
+    const simpleMatch = text.match(/^([\d,.½¼¾]+)\s+/)
+    if (simpleMatch) {
+      quantity = simpleMatch[1].trim()
+      text = text.slice(simpleMatch[0].length).trim()
+    }
+  }
 
   // Quitar adjetivos/participios típicos
   const stripAdj = [
@@ -1644,8 +1654,101 @@ function cleanIngredient(raw) {
   if (text.length < 2) return null
   if (isBlacklisted(text)) return null
 
-  // Capitalizar
-  return text.charAt(0).toUpperCase() + text.slice(1)
+  const name = text.charAt(0).toUpperCase() + text.slice(1)
+  return { name, quantity: quantity || null }
+}
+
+// Mantener cleanIngredient como wrapper para compatibilidad
+function cleanIngredient(raw) {
+  const parsed = parseIngredient(raw)
+  return parsed ? parsed.name : null
+}
+
+/* ============================================================
+   CANTIDADES: parse + sumar
+   ============================================================ */
+
+// Normaliza fracciones unicode a decimales
+function fracToNumber(s) {
+  return s.replace(/½/g, '.5').replace(/¼/g, '.25').replace(/¾/g, '.75')
+}
+
+// Normaliza unidades a su forma singular canónica
+const UNIT_NORMAL = {
+  g: 'g', kg: 'kg', ml: 'ml', l: 'l', cl: 'cl',
+  cucharada: 'cucharada', cucharadas: 'cucharada', cucharado: 'cucharada', cucharados: 'cucharada',
+  cucharadita: 'cucharadita', cucharaditas: 'cucharadita',
+  pizca: 'pizca', pizcas: 'pizca',
+  diente: 'diente', dientes: 'diente',
+  filete: 'filete', filetes: 'filete',
+  lomo: 'lomo', lomos: 'lomo',
+  hoja: 'hoja', hojas: 'hoja', hojita: 'hojita', hojitas: 'hojita',
+  trozo: 'trozo', trozos: 'trozo',
+  lámina: 'lámina', láminas: 'lámina', lamina: 'lámina', laminas: 'lámina',
+  rodaja: 'rodaja', rodajas: 'rodaja',
+  bote: 'bote', botes: 'bote',
+  lata: 'lata', latas: 'lata',
+  paquete: 'paquete', paquetes: 'paquete',
+  sobre: 'sobre', sobres: 'sobre',
+  rama: 'rama', ramas: 'rama',
+  huevo: 'huevo', huevos: 'huevo',
+  pieza: 'pieza', piezas: 'pieza',
+  unidad: 'ud', unidades: 'ud',
+}
+
+// Parsea "200 g", "4 filetes", "1,5 kg", "½ taza" → { value, unit, raw }
+function parseQuantity(qStr) {
+  if (!qStr) return null
+  let s = fracToNumber(String(qStr)).trim()
+  // Soportar formato europeo "1,5"
+  const m = s.match(/^([\d.,]+)\s*([a-záéíóúñ]+)?$/i)
+  if (!m) return { value: null, unit: null, raw: qStr }
+  const value = parseFloat(m[1].replace(',', '.'))
+  if (isNaN(value)) return { value: null, unit: null, raw: qStr }
+  const rawUnit = (m[2] || '').toLowerCase()
+  const unit = UNIT_NORMAL[rawUnit] || rawUnit || null
+  return { value, unit, raw: qStr }
+}
+
+// Combina dos cantidades. Si las unidades son convertibles, suma.
+function combineQuantities(a, b) {
+  if (!a) return b
+  if (!b) return a
+  const pa = parseQuantity(a)
+  const pb = parseQuantity(b)
+
+  if (pa.value != null && pb.value != null) {
+    // kg ↔ g
+    if ((pa.unit === 'g' && pb.unit === 'kg') || (pa.unit === 'kg' && pb.unit === 'g')) {
+      const gA = pa.unit === 'kg' ? pa.value * 1000 : pa.value
+      const gB = pb.unit === 'kg' ? pb.value * 1000 : pb.value
+      const total = gA + gB
+      return total >= 1000 ? formatNumber(total / 1000) + ' kg' : formatNumber(total) + ' g'
+    }
+    // l ↔ ml ↔ cl
+    const toMl = (p) => {
+      if (p.unit === 'l') return p.value * 1000
+      if (p.unit === 'cl') return p.value * 10
+      return p.value
+    }
+    if (['ml', 'l', 'cl'].includes(pa.unit) && ['ml', 'l', 'cl'].includes(pb.unit)) {
+      const total = toMl(pa) + toMl(pb)
+      return total >= 1000 ? formatNumber(total / 1000) + ' l' : formatNumber(total) + ' ml'
+    }
+    // Misma unidad → sumar
+    if (pa.unit === pb.unit) {
+      const total = pa.value + pb.value
+      return pa.unit ? `${formatNumber(total)} ${pa.unit}` : formatNumber(total)
+    }
+  }
+
+  // Si no se puede combinar, concatenar
+  return `${a} + ${b}`
+}
+
+function formatNumber(n) {
+  if (Number.isInteger(n)) return String(n)
+  return Number(n.toFixed(2)).toString().replace('.', ',')
 }
 
 // Extrae items a partir de un menú con deduplicación por nombre canónico
@@ -1660,13 +1763,11 @@ function extractItemsFromMenu(menu) {
       if (!ings) continue
       const arr = Array.isArray(ings) ? ings : String(ings).split('\n')
       for (const raw of arr) {
-        // Una línea puede tener varios items separados por coma o " y "
         const subItems = raw.split(/,| y /i)
         for (const sub of subItems) {
-          const clean = cleanIngredient(sub)
-          if (!clean) continue
-          // Pasar al nombre canónico para fusionar variantes
-          const canonical = toCanonical(clean)
+          const parsed = parseIngredient(sub)
+          if (!parsed) continue
+          const canonical = toCanonical(parsed.name)
           const key = normalize(canonical)
           if (key.length < 2) continue
           if (isBlacklisted(canonical)) continue
@@ -1674,9 +1775,14 @@ function extractItemsFromMenu(menu) {
             seen.set(key, {
               id: 'auto_' + key.replace(/\s+/g, '_'),
               name: canonical,
+              quantity: parsed.quantity,
               category: categorize(canonical),
               checked: false,
             })
+          } else {
+            // Ya existe: sumar la cantidad si se puede
+            const existing = seen.get(key)
+            existing.quantity = combineQuantities(existing.quantity, parsed.quantity)
           }
         }
       }
