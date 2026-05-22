@@ -289,6 +289,7 @@ export default function App() {
 function MainApp() {
   const [view, setView] = useState('today')
   const [selectedWeekId, setSelectedWeekId] = useState(null)
+  const [moreOpen, setMoreOpen] = useState(false)
 
   const today = useMemo(() => {
     const { year, week } = getISOWeek()
@@ -346,6 +347,16 @@ function MainApp() {
           if (v === 'today') setSelectedWeekId(null)
           setView(v)
         }}
+        onMore={() => setMoreOpen(true)}
+      />
+      <MoreMenu
+        open={moreOpen}
+        onClose={() => setMoreOpen(false)}
+        currentView={view}
+        setView={(v) => {
+          if (v === 'today') setSelectedWeekId(null)
+          setView(v)
+        }}
       />
     </div>
   )
@@ -355,19 +366,19 @@ function MainApp() {
    NAVEGACIÓN INFERIOR
    ============================================================ */
 
-function BottomNav({ view, setView }) {
+function BottomNav({ view, setView, onMore }) {
   const items = [
     { id: 'today', label: 'Hoy', icon: IconToday },
     { id: 'week', label: 'Semana', icon: IconWeek },
-    { id: 'recipes', label: 'Recetas', icon: IconRecipes },
     { id: 'shopping', label: 'Compra', icon: IconShopping },
-    { id: 'stats', label: 'Stats', icon: IconStats },
-    { id: 'history', label: 'Histórico', icon: IconHistory },
-    { id: 'import', label: 'Importar', icon: IconImport },
   ]
+  // Los items "extra" disparan "Más"; activo si la vista actual está en ese grupo
+  const moreViews = ['recipes', 'stats', 'history', 'import']
+  const moreActive = moreViews.includes(view)
+
   return (
     <nav className="fixed bottom-0 inset-x-0 bg-cream-50/95 backdrop-blur border-t border-cream-300 safe-bottom z-40">
-      <div className="flex justify-around px-1 pt-2 pb-1 no-scrollbar overflow-x-auto">
+      <div className="flex justify-around px-2 pt-2 pb-1">
         {items.map((it) => {
           const Icon = it.icon
           const active = view === it.id
@@ -375,7 +386,7 @@ function BottomNav({ view, setView }) {
             <button
               key={it.id}
               onClick={() => setView(it.id)}
-              className={`flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-2xl transition-colors shrink-0 ${
+              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-colors ${
                 active ? 'text-terracotta-600' : 'text-ink-500'
               }`}
             >
@@ -390,8 +401,84 @@ function BottomNav({ view, setView }) {
             </button>
           )
         })}
+        <button
+          onClick={onMore}
+          className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-colors ${
+            moreActive ? 'text-terracotta-600' : 'text-ink-500'
+          }`}
+        >
+          <IconMore active={moreActive} />
+          <span
+            className={`text-[10px] font-medium tracking-wide ${
+              moreActive ? 'text-terracotta-600' : 'text-ink-500'
+            }`}
+          >
+            Más
+          </span>
+        </button>
       </div>
     </nav>
+  )
+}
+
+function MoreMenu({ open, onClose, currentView, setView }) {
+  if (!open) return null
+  const items = [
+    { id: 'recipes', label: 'Recetas', icon: IconRecipes, desc: 'Tu repertorio de platos' },
+    { id: 'stats', label: 'Estadísticas', icon: IconStats, desc: 'Calorías y platos más usados' },
+    { id: 'history', label: 'Histórico', icon: IconHistory, desc: 'Todas las semanas guardadas' },
+    { id: 'import', label: 'Importar', icon: IconImport, desc: 'Pegar un menú JSON nuevo' },
+  ]
+  return (
+    <div
+      className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-50 flex items-end justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="bg-cream-50 w-full max-w-lg rounded-t-3xl safe-bottom animate-fade-in-up"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 rounded-full bg-cream-300" />
+        </div>
+        <div className="px-5 pb-5 pt-3">
+          <h2 className="font-display text-2xl text-ink-900 mb-1">Más opciones</h2>
+          <p className="text-sm text-ink-500 mb-5">Elige una sección</p>
+          <div className="space-y-2">
+            {items.map((it) => {
+              const Icon = it.icon
+              const active = currentView === it.id
+              return (
+                <button
+                  key={it.id}
+                  onClick={() => {
+                    setView(it.id)
+                    onClose()
+                  }}
+                  className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-left transition-colors ${
+                    active
+                      ? 'bg-terracotta-50 text-terracotta-700'
+                      : 'bg-cream-100 text-ink-900 active:bg-cream-200'
+                  }`}
+                >
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                      active ? 'bg-terracotta-500 text-cream-50' : 'bg-cream-50 text-ink-700'
+                    }`}
+                  >
+                    <Icon />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-display text-lg leading-tight">{it.label}</p>
+                    <p className="text-xs text-ink-500">{it.desc}</p>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -952,13 +1039,52 @@ function Field({ label, required, children }) {
    VISTA: RECETAS (catálogo)
    ============================================================ */
 
+// Recetas manuales creadas por el usuario (independientes de los menús)
+function useManualRecipes() {
+  const [recipes, setRecipes] = useState([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, 'recipes')),
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+        setRecipes(list)
+        setLoading(false)
+      },
+      () => setLoading(false)
+    )
+    return unsub
+  }, [])
+  return { recipes, loading }
+}
+
+async function saveManualRecipe(id, data) {
+  const recipeId = id || 'r_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+  await setDoc(doc(db, 'recipes', recipeId), {
+    ...data,
+    updatedAt: new Date().toISOString(),
+    ...(id ? {} : { createdAt: new Date().toISOString() }),
+  })
+  return recipeId
+}
+
+async function deleteManualRecipe(id) {
+  await deleteDoc(doc(db, 'recipes', id))
+}
+
 function RecipesView() {
-  const { menus, loading } = useAllMenus()
+  const { menus, loading: loadingMenus } = useAllMenus()
+  const { recipes: manualRecipes, loading: loadingManual } = useManualRecipes()
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
+  const [editing, setEditing] = useState(null) // null | 'new' | recipe object
+
+  const loading = loadingMenus || loadingManual
 
   const recipes = useMemo(() => {
     const map = new Map()
+
+    // Primero las recetas de menús
     for (const m of menus) {
       for (const d of m.days || []) {
         for (const type of ['lunch', 'dinner']) {
@@ -969,11 +1095,25 @@ function RecipesView() {
               proteins: meal.proteins || null,
               calories: meal.calories || null,
               recipe: meal.recipe || null,
+              isManual: false,
             })
           }
         }
       }
     }
+
+    // Luego las manuales (sobrescriben si tienen el mismo nombre)
+    for (const r of manualRecipes) {
+      map.set(r.name, {
+        id: r.id,
+        name: r.name,
+        proteins: r.proteins || null,
+        calories: r.calories || null,
+        recipe: r.recipe || null,
+        isManual: true,
+      })
+    }
+
     let list = Array.from(map.values())
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -984,7 +1124,7 @@ function RecipesView() {
     }
     list.sort((a, b) => a.name.localeCompare(b.name, 'es'))
     return list
-  }, [menus, search])
+  }, [menus, manualRecipes, search])
 
   if (loading) return <Loading />
 
@@ -992,9 +1132,17 @@ function RecipesView() {
     <div className="animate-fade-in-up">
       <Header />
       <div className="px-6">
-        <h1 className="font-display text-3xl text-ink-900 mb-1">Recetas</h1>
+        <div className="flex items-center justify-between mb-1">
+          <h1 className="font-display text-3xl text-ink-900">Recetas</h1>
+          <button
+            onClick={() => setEditing('new')}
+            className="text-terracotta-600 text-sm font-medium"
+          >
+            + Nueva
+          </button>
+        </div>
         <p className="text-sm text-ink-500 mb-5">
-          {recipes.length} platos en tu repertorio
+          {recipes.length} platos · {manualRecipes.length} manuales
         </p>
 
         <input
@@ -1007,8 +1155,8 @@ function RecipesView() {
 
         {!recipes.length ? (
           <EmptyState
-            title={menus.length ? 'Sin resultados' : 'Sin menús importados'}
-            hint={menus.length ? 'Prueba con otro término.' : 'Importa algún menú para empezar.'}
+            title={menus.length || manualRecipes.length ? 'Sin resultados' : 'Sin recetas aún'}
+            hint={menus.length || manualRecipes.length ? 'Prueba con otro término.' : 'Importa un menú o crea tu primera receta.'}
           />
         ) : (
           <div className="space-y-2 pb-4">
@@ -1018,7 +1166,14 @@ function RecipesView() {
                 onClick={() => setSelected(r)}
                 className="card w-full text-left p-4 active:bg-cream-200"
               >
-                <p className="font-display text-lg text-ink-900">{r.name}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-display text-lg text-ink-900 flex-1">{r.name}</p>
+                  {r.isManual && (
+                    <span className="shrink-0 text-[10px] bg-sage-100 text-sage-700 px-2 py-0.5 rounded-full font-medium">
+                      ✏️ Manual
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-3 mt-1 text-xs text-ink-500">
                   {r.proteins && <span>🥩 {formatProteins(r.proteins)}</span>}
                   {r.calories && <span>🔥 {r.calories} kcal</span>}
@@ -1030,13 +1185,176 @@ function RecipesView() {
       </div>
 
       {selected && (
-        <RecipeModal recipe={selected} onClose={() => setSelected(null)} />
+        <RecipeModal
+          recipe={selected}
+          onClose={() => setSelected(null)}
+          onEdit={selected.isManual ? () => { setEditing(selected); setSelected(null) } : null}
+        />
+      )}
+
+      {editing && (
+        <RecipeEditor
+          recipe={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+        />
       )}
     </div>
   )
 }
 
-function RecipeModal({ recipe, onClose }) {
+function RecipeEditor({ recipe, onClose }) {
+  const isNew = !recipe
+  const [form, setForm] = useState(() => ({
+    name: recipe?.name || '',
+    proteins: formatProteins(recipe?.proteins),
+    calories: recipe?.calories || '',
+    method: recipe?.recipe?.method || '',
+    ingredients: asMultiline(recipe?.recipe?.ingredients),
+    steps: asMultiline(recipe?.recipe?.steps),
+  }))
+  const [saving, setSaving] = useState(false)
+
+  const update = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+  async function handleSave() {
+    if (!form.name.trim()) return
+    setSaving(true)
+    try {
+      const data = {
+        name: form.name.trim(),
+        proteins: form.proteins.trim() || null,
+        calories: form.calories ? parseInt(form.calories, 10) : null,
+        recipe:
+          form.method || form.ingredients || form.steps
+            ? {
+                method: form.method.trim() || null,
+                ingredients: form.ingredients.trim() || null,
+                steps: form.steps.trim() || null,
+              }
+            : null,
+      }
+      await saveManualRecipe(recipe?.id || null, data)
+      onClose()
+    } catch (e) {
+      alert('Error al guardar: ' + e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!confirm('¿Eliminar esta receta?')) return
+    setSaving(true)
+    try {
+      await deleteManualRecipe(recipe.id)
+      onClose()
+    } catch (e) {
+      alert('Error al eliminar: ' + e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-cream-50 w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] overflow-y-auto safe-bottom">
+        <div className="sticky top-0 bg-cream-50 border-b border-cream-200 px-5 py-4 flex items-center justify-between">
+          <button onClick={onClose} className="text-ink-500 text-sm font-medium" disabled={saving}>
+            Cancelar
+          </button>
+          <p className="font-display text-lg">
+            {isNew ? 'Nueva receta' : 'Editar receta'}
+          </p>
+          <button
+            onClick={handleSave}
+            disabled={saving || !form.name.trim()}
+            className="text-terracotta-600 text-sm font-semibold disabled:opacity-40"
+          >
+            {saving ? '...' : 'Guardar'}
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <Field label="Plato" required>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => update('name', e.target.value)}
+              placeholder="Ej: Ensalada de lentejas"
+              className="input"
+            />
+          </Field>
+
+          <Field label="Proteína">
+            <input
+              type="text"
+              value={form.proteins}
+              onChange={(e) => update('proteins', e.target.value)}
+              placeholder="Ej: Lentejas + Atún"
+              className="input"
+            />
+          </Field>
+
+          <Field label="Calorías (por persona)">
+            <input
+              type="number"
+              value={form.calories}
+              onChange={(e) => update('calories', e.target.value)}
+              placeholder="Ej: 650"
+              className="input"
+            />
+          </Field>
+
+          <div className="pt-4 border-t border-cream-200">
+            <p className="label-caps text-sage-700 mb-3">Receta (opcional)</p>
+
+            <Field label="Método">
+              <input
+                type="text"
+                value={form.method}
+                onChange={(e) => update('method', e.target.value)}
+                placeholder="Ej: Thermomix + horno"
+                className="input"
+              />
+            </Field>
+
+            <Field label="Ingredientes">
+              <textarea
+                value={form.ingredients}
+                onChange={(e) => update('ingredients', e.target.value)}
+                placeholder="Un ingrediente por línea"
+                rows={6}
+                className="input resize-none"
+              />
+            </Field>
+
+            <Field label="Pasos">
+              <textarea
+                value={form.steps}
+                onChange={(e) => update('steps', e.target.value)}
+                placeholder="Primer paso empieza con 🔧 Método."
+                rows={7}
+                className="input resize-none"
+              />
+            </Field>
+          </div>
+
+          {!isNew && recipe?.id && (
+            <button
+              onClick={handleDelete}
+              disabled={saving}
+              className="w-full py-3 text-terracotta-700 font-medium border border-terracotta-300 rounded-2xl mt-2 active:bg-terracotta-50"
+            >
+              Eliminar receta
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RecipeModal({ recipe, onClose, onEdit }) {
   return (
     <div className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
       <div className="bg-cream-50 w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] overflow-y-auto safe-bottom">
@@ -1047,7 +1365,13 @@ function RecipeModal({ recipe, onClose }) {
           <p className="font-display text-base text-ink-900 text-center flex-1 px-2 truncate">
             {recipe.name}
           </p>
-          <div className="w-12" />
+          {onEdit ? (
+            <button onClick={onEdit} className="text-terracotta-600 text-sm font-semibold">
+              Editar
+            </button>
+          ) : (
+            <div className="w-12" />
+          )}
         </div>
 
         <div className="p-5 space-y-4">
@@ -1096,6 +1420,163 @@ function RecipeModal({ recipe, onClose }) {
       </div>
     </div>
   )
+}
+
+/* ============================================================
+   NORMALIZACIÓN Y ALIASES PARA DEDUPLICACIÓN INTELIGENTE
+   ============================================================ */
+
+// Quita acentos, minúsculas, espacios
+function normalize(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Aliases: si un texto coincide con la regex → se sustituye por el nombre canónico.
+// Esto fusiona "aceite", "aceite de oliva", "aceite de oliva virgen extra" en uno solo.
+const CANONICAL_ALIASES = [
+  // Despensa base
+  { canon: 'Aceite de oliva', match: /^aceite(\s+de\s+oliva)?(\s+virgen(\s+extra)?)?$|^aove$/ },
+  { canon: 'Sal', match: /^sal(\s+marina|\s+gruesa|\s+fina|\s+yodada)?$/ },
+  { canon: 'Pimienta', match: /^pimienta(\s+negra|\s+blanca|\s+molida)?$/ },
+  { canon: 'Vinagre', match: /^vinagre(\s+de\s+(manzana|vino|jerez|modena|arroz))?$/ },
+  { canon: 'Azúcar', match: /^azucar(\s+blanco|\s+moreno)?$/ },
+  { canon: 'Harina', match: /^harina(\s+de\s+\w+)?$/ },
+  { canon: 'Mantequilla', match: /^mantequilla$/ },
+
+  // Proteínas frecuentes
+  { canon: 'Huevos', match: /^huevo(s)?$/ },
+  { canon: 'Pollo', match: /^pollo$|^pechuga(s)?(\s+de\s+pollo)?$/ },
+  { canon: 'Ternera', match: /^ternera$|^carne\s+de\s+ternera$/ },
+  { canon: 'Salmón', match: /^salmon(\s+fresco)?$|^lomos?\s+de\s+salmon$/ },
+  { canon: 'Atún en lata', match: /^atun(\s+en\s+lata)?$|^lata(s)?\s+de\s+atun$/ },
+  { canon: 'Merluza', match: /^merluza$|^lomos?\s+de\s+merluza$/ },
+  { canon: 'Bacalao', match: /^bacalao$|^lomos?\s+de\s+bacalao$/ },
+  { canon: 'Dorada', match: /^dorada$/ },
+  { canon: 'Sepia', match: /^sepia(\s+limpia)?$/ },
+  { canon: 'Pavo', match: /^pavo$|^solomillo(s)?\s+de\s+pavo$|^pechuga(s)?\s+de\s+pavo$/ },
+  { canon: 'Conejo', match: /^conejo(\s+troceado)?$/ },
+  { canon: 'Gambas', match: /^gambas$/ },
+
+  // Verduras frecuentes
+  { canon: 'Ajo', match: /^ajo(s)?$|^dientes?\s+de\s+ajo$/ },
+  { canon: 'Cebolla', match: /^cebolla(s)?(\s+morada(s)?)?$/ },
+  { canon: 'Tomate', match: /^tomate(s)?(\s+maduro(s)?)?$/ },
+  { canon: 'Tomate cherry', match: /^tomate(s)?\s+cherry$/ },
+  { canon: 'Tomate triturado', match: /^tomate\s+triturado$/ },
+  { canon: 'Tomate frito', match: /^tomate\s+frito$/ },
+  { canon: 'Calabacín', match: /^calabacin(es)?$/ },
+  { canon: 'Pimiento rojo', match: /^pimiento(s)?\s+rojo(s)?$/ },
+  { canon: 'Pimiento verde', match: /^pimiento(s)?\s+verde(s)?$/ },
+  { canon: 'Pimiento', match: /^pimiento(s)?$/ },
+  { canon: 'Pimientos asados', match: /^pimientos\s+asados$|^bote(s)?\s+de\s+pimientos\s+asados$/ },
+  { canon: 'Zanahoria', match: /^zanahoria(s)?$/ },
+  { canon: 'Patata', match: /^patata(s)?$/ },
+  { canon: 'Espárragos trigueros', match: /^esparragos(\s+trigueros)?$/ },
+  { canon: 'Champiñones', match: /^champinon(es)?$/ },
+  { canon: 'Lechuga', match: /^lechuga(\s+variada)?$/ },
+  { canon: 'Canónigos', match: /^canonigos$/ },
+  { canon: 'Rúcula', match: /^rucula$/ },
+  { canon: 'Pepino', match: /^pepino(s)?$/ },
+  { canon: 'Aguacate', match: /^aguacate(s)?$/ },
+  { canon: 'Guisantes', match: /^guisantes$/ },
+  { canon: 'Espinacas', match: /^espinaca(s)?$/ },
+  { canon: 'Puerro', match: /^puerro(s)?$/ },
+  { canon: 'Albahaca', match: /^albahaca(\s+fresca)?$/ },
+  { canon: 'Perejil', match: /^perejil(\s+fresco)?$/ },
+
+  // Frutas
+  { canon: 'Limón', match: /^limon(es)?(\s+amarillo|\s+verde)?$|^zumo\s+de\s+limon$/ },
+  { canon: 'Lima', match: /^lima(s)?$|^zumo\s+de\s+lima$/ },
+  { canon: 'Manzana', match: /^manzana(s)?$/ },
+  { canon: 'Pera', match: /^pera(s)?(\s+conferencia)?$/ },
+  { canon: 'Naranja', match: /^naranja(s)?$/ },
+  { canon: 'Mango', match: /^mango(s)?(\s+maduro)?$/ },
+  { canon: 'Uva blanca', match: /^uva(s)?(\s+blanca(s)?)?$/ },
+  { canon: 'Piña', match: /^pina(\s+en\s+rodajas)?$/ },
+
+  // Lácteos
+  { canon: 'Mozzarella', match: /^mozzarella(\s+fresca)?$/ },
+  { canon: 'Queso parmesano', match: /^queso\s+parmesano$|^parmesano$/ },
+  { canon: 'Queso rallado', match: /^queso\s+rallado$/ },
+  { canon: 'Queso tierno', match: /^queso(\s+tierno|\s+fresco)?$/ },
+  { canon: 'Leche', match: /^leche(\s+entera|\s+desnatada|\s+semidesnatada)?$/ },
+  { canon: 'Nata', match: /^nata(\s+para\s+cocinar|\s+liquida)?$/ },
+
+  // Legumbres y cereales
+  { canon: 'Lentejas', match: /^lentejas(\s+cocidas)?$/ },
+  { canon: 'Garbanzos', match: /^garbanzos(\s+cocidos)?$/ },
+  { canon: 'Arroz', match: /^arroz(\s+blanco|\s+integral|\s+basmati)?$/ },
+  { canon: 'Quinoa', match: /^quinoa$/ },
+  { canon: 'Pasta', match: /^pasta(\s+fresca|\s+seca)?$/ },
+
+  // Salsas / aliños
+  { canon: 'Salsa de soja', match: /^salsa\s+de\s+soja$|^soja$/ },
+  { canon: 'Mostaza', match: /^mostaza(\s+dijon)?$/ },
+  { canon: 'Miel', match: /^miel$/ },
+  { canon: 'Aceitunas negras', match: /^aceitunas\s+negras$/ },
+  { canon: 'Aceitunas', match: /^aceitunas$/ },
+  { canon: 'Alcaparras', match: /^alcaparras$/ },
+
+  // Especias
+  { canon: 'Pimentón', match: /^pimenton(\s+dulce|\s+picante|\s+de\s+la\s+vera)?$/ },
+  { canon: 'Orégano', match: /^oregano$/ },
+  { canon: 'Comino', match: /^comino(s)?(\s+molido)?$/ },
+  { canon: 'Curry', match: /^curry(\s+en\s+polvo)?$/ },
+  { canon: 'Tomillo', match: /^tomillo$/ },
+  { canon: 'Eneldo', match: /^eneldo$/ },
+  { canon: 'Nuez moscada', match: /^nuez\s+moscada$/ },
+  { canon: 'Ajo en polvo', match: /^ajo\s+en\s+polvo$/ },
+
+  // Caldos y otros
+  { canon: 'Caldo de pescado', match: /^caldo\s+de\s+pescado$/ },
+  { canon: 'Caldo de pollo', match: /^caldo\s+de\s+pollo$/ },
+  { canon: 'Caldo de verduras', match: /^caldo\s+de\s+verduras$/ },
+  { canon: 'Vino blanco', match: /^vino(\s+blanco)?$/ },
+]
+
+// Texto a descartar siempre (residuos del parseo o frases sueltas)
+const BLACKLIST = [
+  /^al\s+gusto$/,
+  /^opcional$/,
+  /^para\s+servir$/,
+  /^para\s+(la|el)\s+(salsa|aliño|aderezo)$/,
+  /^un\s+(poco|chorrito|chorro)$/,
+  /^c\.?\s*s\.?$/,         // c/s o c.s.
+  /^cucharad/,            // "cucharadas" suelto
+  /^pizca/,
+  /^chorrito/,
+  /^a\s+tu\s+gusto$/,
+  // Residuos típicos de adjetivos huérfanos
+  /^(picad|laminad|rallad|trocead|cocid|fresc|madur|seco|salteado|asad|frito)[oa]s?$/,
+  /^(entero|pequeno|grande|medio|mediano|fino|grueso)[s]?$/,
+  /^duro[s]?$/,           // "huevos duros" → "huevos" + "duros"
+  /^cruda$|^crudo[s]?$/,
+  /^limpia(s)?$|^limpio(s)?$/,
+  /^en\s+\w+$/,           // "en dados", "en tiras" como residuos
+  // Líneas que no son ingredientes reales
+  /^la\s+(musaka|ensalada|sopa|crema)/,
+  /^el\s+/,
+]
+
+function isBlacklisted(text) {
+  const n = normalize(text)
+  if (n.length < 2) return true
+  return BLACKLIST.some((r) => r.test(n))
+}
+
+// Devuelve el nombre canónico si hay alias, o el texto original capitalizado
+function toCanonical(cleanedText) {
+  const n = normalize(cleanedText)
+  for (const a of CANONICAL_ALIASES) {
+    if (a.match.test(n)) return a.canon
+  }
+  // Capitalizar
+  return cleanedText.charAt(0).toUpperCase() + cleanedText.slice(1)
 }
 
 /* ============================================================
@@ -1150,7 +1631,8 @@ function cleanIngredient(raw) {
     'fresc[oa]s?', 'maduros?', 'limpi[oa] en trozos', 'en dados', 'en tiras',
     'en rodajas', 'en láminas', 'en laminas', 'en cuartos', 'en juliana',
     'al natural', 'al gusto', 'en aceite', 'sin pepitas', 'sin piel',
-    'sin hueso', 'desmenuzad[oa]', 'rallad[oa]'
+    'sin hueso', 'desmenuzad[oa]', 'rallad[oa]', 'duros?', 'crudos?',
+    'finas?', 'gruesos?', 'maduras?', 'troceadas?', 'mediano?s?'
   ]
   for (const a of stripAdj) {
     text = text.replace(new RegExp(',?\\s*\\b' + a + '\\b', 'gi'), '')
@@ -1160,13 +1642,13 @@ function cleanIngredient(raw) {
   text = text.replace(/^[,.\s]+|[,.\s]+$/g, '').trim()
 
   if (text.length < 2) return null
-  if (/^aliño|^aderezo|^salsa$/i.test(text)) return null
+  if (isBlacklisted(text)) return null
 
   // Capitalizar
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-// Extrae items a partir de un menú
+// Extrae items a partir de un menú con deduplicación por nombre canónico
 function extractItemsFromMenu(menu) {
   if (!menu || !menu.days) return []
   const seen = new Map()
@@ -1178,17 +1660,21 @@ function extractItemsFromMenu(menu) {
       if (!ings) continue
       const arr = Array.isArray(ings) ? ings : String(ings).split('\n')
       for (const raw of arr) {
-        // Una línea puede tener varios items separados por coma (sal, pimienta, etc.)
+        // Una línea puede tener varios items separados por coma o " y "
         const subItems = raw.split(/,| y /i)
         for (const sub of subItems) {
           const clean = cleanIngredient(sub)
           if (!clean) continue
-          const key = clean.toLowerCase()
+          // Pasar al nombre canónico para fusionar variantes
+          const canonical = toCanonical(clean)
+          const key = normalize(canonical)
+          if (key.length < 2) continue
+          if (isBlacklisted(canonical)) continue
           if (!seen.has(key)) {
             seen.set(key, {
               id: 'auto_' + key.replace(/\s+/g, '_'),
-              name: clean,
-              category: categorize(clean),
+              name: canonical,
+              category: categorize(canonical),
               checked: false,
             })
           }
@@ -1332,22 +1818,27 @@ function ShoppingView({ todayWeekId }) {
 function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
   const items = list.items || []
 
-  // Agrupar por categoría
-  const byCategory = useMemo(() => {
-    const groups = {}
+  // Separar: pendientes (por categoría) y comprados (todos juntos al final)
+  const { pendingByCategory, checkedItems } = useMemo(() => {
+    const pending = {}
+    const checked = []
     for (const it of items) {
-      const cat = it.category || 'otros'
-      if (!groups[cat]) groups[cat] = []
-      groups[cat].push(it)
+      if (it.checked) {
+        checked.push(it)
+      } else {
+        const cat = it.category || 'otros'
+        if (!pending[cat]) pending[cat] = []
+        pending[cat].push(it)
+      }
     }
-    return groups
+    return { pendingByCategory: pending, checkedItems: checked }
   }, [items])
 
   const categoryOrder = [...CATEGORIES.map((c) => c.key), 'otros']
   const categoryLabels = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]))
   categoryLabels.otros = 'Otros'
 
-  const totalChecked = items.filter((i) => i.checked).length
+  const totalChecked = checkedItems.length
 
   async function toggleItem(id) {
     const newItems = items.map((it) =>
@@ -1409,8 +1900,9 @@ function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
         />
       ) : (
         <div className="space-y-5 pb-8">
+          {/* Pendientes agrupados por categoría */}
           {categoryOrder.map((cat) => {
-            const its = byCategory[cat]
+            const its = pendingByCategory[cat]
             if (!its || !its.length) return null
             return (
               <div key={cat}>
@@ -1430,6 +1922,25 @@ function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
               </div>
             )
           })}
+
+          {/* Comprados: al final, juntos, difuminados */}
+          {checkedItems.length > 0 && (
+            <div>
+              <p className="label-caps text-ink-500 mb-2">
+                Comprados · {checkedItems.length}
+              </p>
+              <div className="space-y-1.5 opacity-50">
+                {checkedItems.map((it) => (
+                  <ShoppingItem
+                    key={it.id}
+                    item={it}
+                    onToggle={() => toggleItem(it.id)}
+                    onDelete={() => deleteItem(it.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           {items.length > 0 && (
             <button
@@ -2115,6 +2626,15 @@ function IconShopping() {
     <svg {...iconProps}>
       <path d="M5 8h14l-1.5 10.5a2 2 0 0 1-2 1.5h-7a2 2 0 0 1-2-1.5L5 8z" />
       <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+    </svg>
+  )
+}
+function IconMore() {
+  return (
+    <svg {...iconProps}>
+      <circle cx="6" cy="12" r="1.4" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+      <circle cx="18" cy="12" r="1.4" fill="currentColor" />
     </svg>
   )
 }
