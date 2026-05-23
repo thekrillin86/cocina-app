@@ -46,76 +46,6 @@ function formatProteins(value) {
    HELPERS DE LISTA DE LA COMPRA
    ============================================================ */
 
-const SHOPPING_CATEGORIES = [
-  'Proteínas',
-  'Lácteos',
-  'Verduras y frutas',
-  'Despensa',
-  'Otros',
-]
-
-const CATEGORY_KEYWORDS = {
-  'Proteínas': ['pollo', 'ternera', 'pavo', 'cerdo', 'salm', 'merluza', 'bacalao', 'dorada', 'lubina', 'atún', 'atun', 'sepia', 'pulpo', 'gamba', 'conejo', 'huevo', 'jamón', 'jamon', 'rape', 'pescado', 'solomillo', 'contramuslo', 'carne'],
-  'Lácteos': ['leche', 'yogur', 'queso', 'nata', 'mantequilla', 'mozzarella', 'parmesano', 'ricotta'],
-  'Verduras y frutas': ['calabac', 'zanahoria', 'cebolla', 'pimiento', 'tomate', 'lechuga', 'espinaca', 'champi', 'espárrago', 'esparra', 'rúcula', 'rucula', 'canónigo', 'canonigo', 'patata', 'pepino', 'ajo', 'apio', 'judía', 'judia', 'mango', 'aguacate', 'manzana', 'pera', 'uva', 'limón', 'limon', 'lima', 'piña', 'pina', 'naranja', 'perejil', 'albahaca', 'cebolleta', 'puerro', 'boniato', 'castaña', 'castana', 'aceituna', 'alcaparra', 'guisante', 'fruta', 'verdura', 'tomatito', 'cherry'],
-  'Despensa': ['arroz', 'pasta', 'lenteja', 'garbanzo', 'quinoa', 'harina', 'aceite', 'vinagre', 'sal', 'pimienta', 'pimentón', 'pimenton', 'orégano', 'oregano', 'tomillo', 'comino', 'soja', 'caldo', 'tomate frito', 'tomate triturado', 'pan', 'tortilla', 'nuez moscada', 'miel', 'vino', 'eneldo', 'frutos secos', 'almendra', 'piñon', 'pinon', 'macarrones', 'espagueti', 'azúcar', 'azucar', 'sirope', 'mostaza', 'ketchup', 'mayonesa'],
-}
-
-function categorizeIngredient(name) {
-  if (!name) return 'Otros'
-  const normalized = String(name).toLowerCase().trim()
-  for (const category of SHOPPING_CATEGORIES) {
-    const keywords = CATEGORY_KEYWORDS[category] || []
-    if (keywords.some((kw) => normalized.includes(kw))) {
-      return category
-    }
-  }
-  return 'Otros'
-}
-
-// Parsea una línea de ingrediente de receta en uno o varios productos limpios
-function parseIngredientLine(line) {
-  if (!line) return []
-  let cleaned = String(line).trim()
-
-  // Si tiene "→", quedarse con lo posterior (cantidad final consolidada)
-  if (cleaned.includes('→')) {
-    const after = cleaned.split('→').slice(-1)[0] || ''
-    cleaned = after.replace(/\([^)]*\)/g, '').trim()
-  }
-
-  // Quitar cantidades iniciales: "300 g de", "2 cucharadas de", "1 lata de", etc.
-  cleaned = cleaned.replace(
-    /^[~]?\s*[\d.,/]+\s*(g|gr|gramos?|ml|l|kg|cucharadas?|cdas?|cucharaditas?|cdtas?|dientes?|botes?|lomos?|filetes?|huevos?|latas?|unidades?|ud|uds|ramas?|hojas?|piezas?)\s*(de\s+)?/i,
-    ''
-  )
-
-  // Quitar "1 ", "2 " al inicio cuando es un contador simple
-  cleaned = cleaned.replace(/^[\d.,/]+\s+/, '')
-
-  // Quitar preparaciones culinarias
-  cleaned = cleaned.replace(
-    /\s+(en|cortado en|partido en)\s+(rodajas?|tiras?|dados?|láminas?|laminas?|cuartos?|polvo|trozos?|filetes?|gajos?|juliana|brunoise).*$/i,
-    ''
-  )
-  cleaned = cleaned.replace(
-    /\s+(picados?|laminados?|troceados?|cortados?|rallados?|maduros?|frescos?|secos?|en\s+conserva|al\s+natural|cocidos?|hervidos?|crudo|crudos?|peladas?|limpias?|enteros?)\b.*$/i,
-    ''
-  )
-
-  // Quitar paréntesis residuales
-  cleaned = cleaned.replace(/\([^)]*\)/g, '').trim()
-
-  // Si quedan separadores tipo "sal, pimienta y aceite" → varios items
-  let parts = cleaned.split(/,|\s+y\s+/i)
-  parts = parts.map((p) => p.trim()).filter((p) => p.length > 1)
-
-  // Capitalizar primera letra de cada parte
-  parts = parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-
-  return parts
-}
-
 function generateItemId() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
 }
@@ -1585,13 +1515,19 @@ function toCanonical(cleanedText) {
 
 // Categorización por palabras clave
 const CATEGORIES = [
-  { key: 'proteinas', label: 'Proteínas', keywords: ['pollo', 'ternera', 'pavo', 'conejo', 'cerdo', 'salmón', 'salmon', 'merluza', 'bacalao', 'dorada', 'lubina', 'sepia', 'calamar', 'gambas', 'atún', 'atun', 'pulpo', 'jamón', 'jamon', 'lomo', 'carne', 'pescado', 'rape', 'mariscos', 'mejillones', 'almejas'] },
-  { key: 'lacteos', label: 'Lácteos y huevos', keywords: ['huevo', 'leche', 'queso', 'mozzarella', 'ricotta', 'yogur', 'mantequilla', 'nata', 'batido', 'parmesano', 'manchego', 'feta'] },
-  { key: 'verduras', label: 'Verduras', keywords: ['calabacín', 'calabacin', 'pimiento', 'tomate', 'ajo', 'lechuga', 'cebolla', 'zanahoria', 'pepino', 'espinaca', 'espárrago', 'esparrago', 'champiñón', 'champiñon', 'champinon', 'brócoli', 'brocoli', 'coliflor', 'judía', 'judia', 'alcachofa', 'perejil', 'albahaca', 'cilantro', 'canónigo', 'canonigo', 'rúcula', 'rucula', 'patata', 'boniato', 'apio', 'puerro', 'rábano', 'rabano', 'remolacha', 'aguacate'] },
-  { key: 'frutas', label: 'Frutas', keywords: ['limón', 'limon', 'manzana', 'pera', 'naranja', 'lima', 'uva', 'mango', 'plátano', 'platano', 'fresa', 'melón', 'melon', 'sandía', 'sandia', 'piña', 'pina', 'kiwi', 'frambuesa', 'arándano'] },
-  { key: 'despensa', label: 'Despensa', keywords: ['arroz', 'pasta', 'quinoa', 'harina', 'aceite', 'vinagre', 'sal', 'pimienta', 'pimentón', 'pimenton', 'orégano', 'oregano', 'comino', 'curry', 'azúcar', 'azucar', 'soja', 'miel', 'lentejas', 'garbanzos', 'alubias', 'frijoles', 'aceitunas', 'alcaparras', 'mostaza', 'caldo', 'tomate triturado', 'tomate frito', 'eneldo', 'tomillo', 'romero', 'laurel', 'nuez moscada', 'almendras', 'castañas', 'castanas', 'frutos secos'] },
-  { key: 'panaderia', label: 'Panadería', keywords: ['pan', 'tortilla', 'hojaldre', 'baguette', 'biscote', 'pita'] },
-  { key: 'bebidas', label: 'Bebidas', keywords: ['vino', 'cerveza', 'agua', 'zumo', 'refresco'] },
+  { key: 'carne', label: 'Carne', icon: '🥩', keywords: ['pollo', 'pechuga', 'ternera', 'pavo', 'cerdo', 'conejo', 'jamón', 'jamon', 'lomo de cerdo', 'lomo cerdo', 'carne picada', 'carne de ternera', 'solomillo', 'contramuslo', 'muslitos', 'jamoncito', 'albóndiga', 'albondiga', 'hamburguesa', 'salchicha', 'chorizo', 'morcilla', 'bacon', 'panceta'] },
+  { key: 'pescado', label: 'Pescado y marisco', icon: '🐟', keywords: ['salmón', 'salmon', 'merluza', 'bacalao', 'dorada', 'lubina', 'sepia', 'calamar', 'gambas', 'atún en lata', 'atun en lata', 'atún', 'atun', 'pulpo', 'rape', 'mejillones', 'almejas', 'langostinos', 'pescado', 'marisco', 'anchoa', 'sardina', 'boquerón', 'boqueron', 'caballa', 'berberechos'] },
+  { key: 'verdura', label: 'Verdura', icon: '🥦', keywords: ['calabacín', 'calabacin', 'pimiento', 'tomate', 'ajo', 'lechuga', 'cebolla', 'cebolleta', 'zanahoria', 'pepino', 'espinaca', 'espárrago', 'esparrago', 'champiñón', 'champiñon', 'champinon', 'brócoli', 'brocoli', 'coliflor', 'judía', 'judia', 'alcachofa', 'perejil', 'albahaca', 'cilantro', 'canónigo', 'canonigo', 'rúcula', 'rucula', 'patata', 'boniato', 'apio', 'puerro', 'rábano', 'rabano', 'remolacha', 'aguacate', 'guisantes', 'lombarda', 'kale', 'endivia', 'achicoria', 'berro', 'col', 'acelga', 'pimentón fresco', 'guindilla', 'jengibre fresco'] },
+  { key: 'fruta', label: 'Fruta', icon: '🍎', keywords: ['limón', 'limon', 'manzana', 'pera', 'naranja', 'lima', 'uva', 'mango', 'plátano', 'platano', 'fresa', 'melón', 'melon', 'sandía', 'sandia', 'piña', 'pina', 'kiwi', 'frambuesa', 'arándano', 'arandano', 'mandarina', 'cereza', 'melocotón', 'melocoton', 'albaricoque', 'higo', 'granada', 'pomelo', 'paraguayo'] },
+  { key: 'lacteos', label: 'Lácteos y huevos', icon: '🥛', keywords: ['huevo', 'leche', 'queso', 'mozzarella', 'ricotta', 'yogur', 'mantequilla', 'nata', 'queso batido', 'parmesano', 'manchego', 'feta', 'requesón', 'requeson', 'cuajada', 'kefir', 'crème fraîche', 'creme fraiche'] },
+  { key: 'pasta_arroz', label: 'Pasta, arroz y legumbres', icon: '🍝', keywords: ['arroz', 'pasta integral', 'pasta', 'quinoa', 'macarrones', 'espagueti', 'fideos', 'lentejas', 'garbanzos', 'alubias', 'frijoles', 'judías blancas', 'judias blancas', 'cous cous', 'couscous', 'mijo', 'bulgur', 'pasta de lentejas', 'pasta legumbre', 'pasta fresca'] },
+  { key: 'conservas', label: 'Conservas', icon: '🥫', keywords: ['tomate triturado', 'tomate frito', 'pimientos asados', 'aceitunas', 'alcaparras', 'maíz', 'maiz', 'remolacha en conserva', 'sardinas en lata', 'caballa en lata', 'mejillones en lata', 'piña en almíbar', 'pina en almibar', 'piña en rodajas', 'pina en rodajas', 'bonito en lata'] },
+  { key: 'panaderia', label: 'Panadería', icon: '🥖', keywords: ['pan', 'tortilla de trigo', 'tortilla trigo', 'tortilla de maíz', 'hojaldre', 'baguette', 'biscote', 'pita', 'wrap', 'masa quebrada', 'masa de pizza', 'masa filo', 'pan rallado', 'lasaña', 'cannelloni'] },
+  { key: 'despensa', label: 'Despensa', icon: '🧂', keywords: ['aceite', 'vinagre', 'sal', 'pimienta', 'pimentón', 'pimenton', 'orégano', 'oregano', 'comino', 'curry', 'azúcar', 'azucar', 'salsa de soja', 'soja', 'miel', 'mostaza', 'caldo', 'eneldo', 'tomillo', 'romero', 'laurel', 'nuez moscada', 'almendras', 'castañas', 'castanas', 'frutos secos', 'harina', 'levadura', 'canela', 'vainilla', 'piñones', 'pinones', 'nueces', 'pasas', 'sésamo', 'sesamo', 'cúrcuma', 'curcuma', 'jengibre en polvo', 'ajo en polvo', 'sirope', 'ketchup', 'mayonesa', 'guacamole'] },
+  { key: 'bebidas', label: 'Bebidas', icon: '🥤', keywords: ['vino blanco', 'vino tinto', 'vino', 'cerveza', 'agua', 'zumo', 'refresco', 'café', 'cafe', 'té', 'infusión', 'infusion', 'leche vegetal', 'horchata', 'kombucha'] },
+  { key: 'higiene', label: 'Baño / Higiene', icon: '🧴', keywords: ['champú', 'champu', 'gel de baño', 'gel ducha', 'gel hidroalcohólico', 'jabón', 'jabon', 'pasta de dientes', 'pasta dientes', 'desodorante', 'colonia', 'crema corporal', 'crema facial', 'maquinilla', 'cuchillas afeitar', 'tampones', 'compresas', 'papel higiénico', 'papel higienico', 'pañuelos', 'hilo dental', 'enjuague bucal', 'protector solar', 'after sun'] },
+  { key: 'lavanderia', label: 'Lavandería y limpieza', icon: '🧺', keywords: ['detergente', 'suavizante', 'lejía', 'lejia', 'quitamanchas', 'limpiacristales', 'fregasuelos', 'limpia hornos', 'lavavajillas', 'estropajo', 'bayeta', 'guantes de limpieza', 'multiusos'] },
+  { key: 'hogar', label: 'Hogar', icon: '🧹', keywords: ['servilletas', 'papel de cocina', 'papel cocina', 'bolsas de basura', 'bolsas basura', 'film transparente', 'film', 'papel de aluminio', 'aluminio', 'pilas', 'bombillas', 'velas', 'cerillas', 'mecheros', 'palillos', 'papel de horno', 'papel horno'] },
 ]
 
 function categorize(name) {
@@ -1752,6 +1688,7 @@ function formatNumber(n) {
 }
 
 // Extrae items a partir de un menú con deduplicación por nombre canónico
+// Cada item incluye la lista de recetas/días donde aparece, para controlar caducidades
 function extractItemsFromMenu(menu) {
   if (!menu || !menu.days) return []
   const seen = new Map()
@@ -1762,6 +1699,12 @@ function extractItemsFromMenu(menu) {
       const ings = meal.recipe.ingredients
       if (!ings) continue
       const arr = Array.isArray(ings) ? ings : String(ings).split('\n')
+      const recipeRef = {
+        recipeName: meal.name || null,
+        day: d.day || null,
+        date: d.date || null,
+        mealType: type, // 'lunch' o 'dinner'
+      }
       for (const raw of arr) {
         const subItems = raw.split(/,| y /i)
         for (const sub of subItems) {
@@ -1778,11 +1721,18 @@ function extractItemsFromMenu(menu) {
               quantity: parsed.quantity,
               category: categorize(canonical),
               checked: false,
+              recipes: recipeRef.recipeName ? [recipeRef] : [],
             })
           } else {
-            // Ya existe: sumar la cantidad si se puede
             const existing = seen.get(key)
             existing.quantity = combineQuantities(existing.quantity, parsed.quantity)
+            // Añadir referencia solo si no está duplicada
+            if (recipeRef.recipeName) {
+              const dupe = existing.recipes.some(
+                (r) => r.recipeName === recipeRef.recipeName && r.day === recipeRef.day && r.mealType === recipeRef.mealType
+              )
+              if (!dupe) existing.recipes.push(recipeRef)
+            }
           }
         }
       }
@@ -1941,8 +1891,10 @@ function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
   }, [items])
 
   const categoryOrder = [...CATEGORIES.map((c) => c.key), 'otros']
-  const categoryLabels = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]))
-  categoryLabels.otros = 'Otros'
+  const categoryMeta = Object.fromEntries(
+    CATEGORIES.map((c) => [c.key, { label: c.label, icon: c.icon }])
+  )
+  categoryMeta.otros = { label: 'Otros', icon: '🔸' }
 
   const totalChecked = checkedItems.length
 
@@ -2010,10 +1962,13 @@ function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
           {categoryOrder.map((cat) => {
             const its = pendingByCategory[cat]
             if (!its || !its.length) return null
+            const meta = categoryMeta[cat] || { label: cat, icon: '🔸' }
             return (
               <div key={cat}>
-                <p className="label-caps text-sage-700 mb-2">
-                  {categoryLabels[cat] || cat}
+                <p className="label-caps text-sage-700 mb-2 flex items-center gap-1.5">
+                  <span aria-hidden>{meta.icon}</span>
+                  <span>{meta.label}</span>
+                  <span className="text-ink-400 font-normal">· {its.length}</span>
                 </p>
                 <div className="space-y-1.5">
                   {its.map((it) => (
@@ -2064,10 +2019,10 @@ function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
 
 function ShoppingItem({ item, onToggle, onDelete }) {
   return (
-    <div className="card flex items-center gap-3 px-4 py-3">
+    <div className="card flex items-start gap-3 px-4 py-3">
       <button
         onClick={onToggle}
-        className={`shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
+        className={`shrink-0 mt-0.5 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
           item.checked
             ? 'bg-terracotta-500 border-terracotta-500'
             : 'border-cream-400'
@@ -2080,14 +2035,32 @@ function ShoppingItem({ item, onToggle, onDelete }) {
         )}
       </button>
       <div className="flex-1 min-w-0">
-        <p className={`text-ink-900 ${item.checked ? 'line-through text-ink-500' : ''}`}>
-          {item.name}
-        </p>
-        {item.quantity && (
-          <p className="text-xs text-ink-500">{item.quantity}</p>
+        <div className="flex items-baseline gap-2">
+          <p className={`text-ink-900 leading-snug ${item.checked ? 'line-through text-ink-500' : ''}`}>
+            {item.name}
+          </p>
+          {item.quantity && (
+            <span className="text-sm font-medium text-terracotta-700 shrink-0">
+              {item.quantity}
+            </span>
+          )}
+        </div>
+        {item.recipes && item.recipes.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            {item.recipes.map((r, idx) => (
+              <span
+                key={idx}
+                className="text-[10px] px-2 py-0.5 rounded-full bg-cream-200 text-ink-700 font-medium"
+                title={r.recipeName}
+              >
+                {r.day || '?'}
+                {r.mealType ? (r.mealType === 'lunch' ? ' · com.' : ' · cena') : ''}
+              </span>
+            ))}
+          </div>
         )}
       </div>
-      <button onClick={onDelete} className="shrink-0 text-ink-500 text-lg px-2">
+      <button onClick={onDelete} className="shrink-0 text-ink-500 text-lg px-2 mt-0.5">
         ×
       </button>
     </div>
@@ -2217,10 +2190,10 @@ function AddItemModal({ list, onClose }) {
             >
               {CATEGORIES.map((c) => (
                 <option key={c.key} value={c.key}>
-                  {c.label}
+                  {c.icon} {c.label}
                 </option>
               ))}
-              <option value="otros">Otros</option>
+              <option value="otros">🔸 Otros</option>
             </select>
           </Field>
           <button
