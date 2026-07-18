@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import {
   collection,
   doc,
@@ -1643,7 +1643,20 @@ function parseQuantity(qStr) {
   if (isNaN(value)) return { value: null, unit: null, raw: qStr }
   const rawUnit = (m[2] || '').toLowerCase()
   const unit = UNIT_NORMAL[rawUnit] || rawUnit || null
-  return { value, unit, raw: qStr }
+  return { value, unit, rawUnit: m[2] || null, raw: qStr }
+}
+
+// Sube o baja la cantidad respetando la unidad original
+function bumpQuantity(qStr, dir) {
+  const p = parseQuantity(qStr)
+  if (!p || p.value == null) return qStr || ''
+  let step = 1
+  if (p.unit === 'g' || p.unit === 'ml') step = 50
+  else if (p.unit === 'kg' || p.unit === 'l') step = 0.5
+  const next = Math.max(0, p.value + dir * step)
+  if (next === 0) return ''
+  const u = p.rawUnit || ''
+  return u ? `${formatNumber(next)} ${u}` : formatNumber(next)
 }
 
 // Combina dos cantidades. Si las unidades son convertibles, suma.
@@ -1785,6 +1798,7 @@ function ShoppingView({ todayWeekId }) {
   const [showAdd, setShowAdd] = useState(false)
   const [showNewList, setShowNewList] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [editingItemId, setEditingItemId] = useState(null)
 
   // Activar la primera lista por defecto
   useEffect(() => {
@@ -1839,6 +1853,7 @@ function ShoppingView({ todayWeekId }) {
                 todayWeekId={todayWeekId}
                 onShowAdd={() => setShowAdd(true)}
                 onShowImport={() => setShowImport(true)}
+                onShowEdit={(it) => setEditingItemId(it.id)}
               />
             )}
           </>
@@ -1855,11 +1870,22 @@ function ShoppingView({ todayWeekId }) {
         />
       )}
       {showAdd && activeList && (
-        <AddItemModal
+        <ItemModal
           list={activeList}
+          item={null}
           onClose={() => setShowAdd(false)}
         />
       )}
+      {editingItemId &&
+        activeList &&
+        (activeList.items || []).some((it) => it.id === editingItemId) && (
+          <ItemModal
+            key={editingItemId}
+            list={activeList}
+            item={(activeList.items || []).find((it) => it.id === editingItemId)}
+            onClose={() => setEditingItemId(null)}
+          />
+        )}
       {showImport && activeList && (
         <ImportMenuModal
           list={activeList}
@@ -1871,7 +1897,7 @@ function ShoppingView({ todayWeekId }) {
   )
 }
 
-function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
+function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport, onShowEdit }) {
   const items = list.items || []
 
   // Separar: pendientes (por categoría) y comprados (todos juntos al final)
@@ -1977,6 +2003,7 @@ function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
                       item={it}
                       onToggle={() => toggleItem(it.id)}
                       onDelete={() => deleteItem(it.id)}
+                      onEdit={() => onShowEdit(it)}
                     />
                   ))}
                 </div>
@@ -1997,6 +2024,7 @@ function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
                     item={it}
                     onToggle={() => toggleItem(it.id)}
                     onDelete={() => deleteItem(it.id)}
+                    onEdit={() => onShowEdit(it)}
                   />
                 ))}
               </div>
@@ -2017,7 +2045,7 @@ function ShoppingListContent({ list, todayWeekId, onShowAdd, onShowImport }) {
   )
 }
 
-function ShoppingItem({ item, onToggle, onDelete }) {
+function ShoppingItem({ item, onToggle, onDelete, onEdit }) {
   return (
     <div className="card flex items-start gap-3 px-4 py-3">
       <button
@@ -2034,7 +2062,7 @@ function ShoppingItem({ item, onToggle, onDelete }) {
           </svg>
         )}
       </button>
-      <div className="flex-1 min-w-0">
+      <button onClick={onEdit} className="flex-1 min-w-0 text-left">
         <div className="flex items-baseline gap-2">
           <p className={`text-ink-900 leading-snug ${item.checked ? 'line-through text-ink-500' : ''}`}>
             {item.name}
@@ -2059,7 +2087,7 @@ function ShoppingItem({ item, onToggle, onDelete }) {
             ))}
           </div>
         )}
-      </div>
+      </button>
       <button onClick={onDelete} className="shrink-0 text-ink-500 text-lg px-2 mt-0.5">
         ×
       </button>
@@ -2118,24 +2146,50 @@ function NewListModal({ onClose, onCreated }) {
   )
 }
 
-function AddItemModal({ list, onClose }) {
-  const [name, setName] = useState('')
-  const [quantity, setQuantity] = useState('')
-  const [category, setCategory] = useState('otros')
+// Sirve tanto para añadir un producto nuevo como para editar uno existente
+function ItemModal({ list, item, onClose }) {
+  const isNew = !item
+  const [name, setName] = useState(item?.name || '')
+  const [quantity, setQuantity] = useState(item?.quantity || '')
+  const [category, setCategory] = useState(item?.category || 'otros')
   const [saving, setSaving] = useState(false)
+  const nameTouched = useRef(false)
 
-  async function handleAdd() {
+  // Auto-categorizar solo cuando el usuario escribe el nombre
+  useEffect(() => {
+    if (!nameTouched.current) return
+    if (name.trim()) {
+      const cat = categorize(name)
+      if (cat !== 'otros') setCategory(cat)
+    }
+  }, [name])
+
+  async function handleSave() {
     if (!name.trim()) return
     setSaving(true)
     try {
-      const newItem = {
-        id: 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-        name: name.trim(),
-        category,
-        checked: false,
-        quantity: quantity.trim() || null,
+      const items = list.items || []
+      let newItems
+      if (isNew) {
+        newItems = [
+          ...items,
+          {
+            id: 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            name: name.trim(),
+            category,
+            checked: false,
+            quantity: quantity.trim() || null,
+          },
+        ]
+      } else {
+        // Conserva checked y las referencias de receta/día
+        newItems = items.map((it) =>
+          it.id === item.id
+            ? { ...it, name: name.trim(), category, quantity: quantity.trim() || null }
+            : it
+        )
       }
-      await updateShoppingList(list.id, [...(list.items || []), newItem])
+      await updateShoppingList(list.id, newItems)
       onClose()
     } catch (e) {
       alert('Error: ' + e.message)
@@ -2144,22 +2198,32 @@ function AddItemModal({ list, onClose }) {
     }
   }
 
-  // Auto-categorizar mientras escribe
-  useEffect(() => {
-    if (name.trim()) {
-      const cat = categorize(name)
-      if (cat !== 'otros') setCategory(cat)
+  async function handleDelete() {
+    if (!confirm(`¿Eliminar "${item.name}" de la lista?`)) return
+    setSaving(true)
+    try {
+      await updateShoppingList(
+        list.id,
+        (list.items || []).filter((it) => it.id !== item.id)
+      )
+      onClose()
+    } catch (e) {
+      alert('Error: ' + e.message)
+    } finally {
+      setSaving(false)
     }
-  }, [name])
+  }
 
   return (
     <div className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
       <div className="bg-cream-50 w-full max-w-md rounded-t-3xl sm:rounded-3xl safe-bottom max-h-[92vh] overflow-y-auto">
         <div className="sticky top-0 bg-cream-50 border-b border-cream-200 px-5 py-4 flex items-center justify-between">
-          <button onClick={onClose} className="text-ink-500 text-sm font-medium">
+          <button onClick={onClose} className="text-ink-500 text-sm font-medium" disabled={saving}>
             Cancelar
           </button>
-          <p className="font-display text-lg">Añadir a {list.name}</p>
+          <p className="font-display text-lg truncate px-2">
+            {isNew ? `Añadir a ${list.name}` : 'Editar producto'}
+          </p>
           <div className="w-12" />
         </div>
         <div className="p-5 space-y-3">
@@ -2167,21 +2231,42 @@ function AddItemModal({ list, onClose }) {
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                nameTouched.current = true
+                setName(e.target.value)
+              }}
               placeholder="Ej: Salmón fresco"
-              autoFocus
+              autoFocus={isNew}
               className="input"
             />
           </Field>
+
           <Field label="Cantidad (opcional)">
-            <input
-              type="text"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              placeholder="Ej: 4 lomos, 500 g, 2 piezas"
-              className="input"
-            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setQuantity((q) => bumpQuantity(q, -1))}
+                className="shrink-0 w-11 rounded-2xl bg-cream-200 text-ink-700 text-xl font-medium active:bg-cream-300"
+                aria-label="Reducir cantidad"
+              >
+                −
+              </button>
+              <input
+                type="text"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                placeholder="Ej: 4 lomos, 500 g, 2 piezas"
+                className="input flex-1"
+              />
+              <button
+                onClick={() => setQuantity((q) => bumpQuantity(q, 1))}
+                className="shrink-0 w-11 rounded-2xl bg-cream-200 text-ink-700 text-xl font-medium active:bg-cream-300"
+                aria-label="Aumentar cantidad"
+              >
+                +
+              </button>
+            </div>
           </Field>
+
           <Field label="Categoría">
             <select
               value={category}
@@ -2196,13 +2281,39 @@ function AddItemModal({ list, onClose }) {
               <option value="otros">🔸 Otros</option>
             </select>
           </Field>
+
+          {!isNew && item.recipes && item.recipes.length > 0 && (
+            <div>
+              <p className="label-caps text-sage-700 mb-2">Se usa en</p>
+              <div className="space-y-1">
+                {item.recipes.map((r, idx) => (
+                  <p key={idx} className="text-sm text-ink-700">
+                    {r.day || '?'}
+                    {r.mealType ? (r.mealType === 'lunch' ? ' · comida' : ' · cena') : ''}
+                    {r.recipeName ? ` — ${r.recipeName}` : ''}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+
           <button
-            onClick={handleAdd}
+            onClick={handleSave}
             disabled={!name.trim() || saving}
             className="btn-primary w-full disabled:opacity-40"
           >
-            {saving ? 'Añadiendo…' : 'Añadir a la lista'}
+            {saving ? 'Guardando…' : isNew ? 'Añadir a la lista' : 'Guardar cambios'}
           </button>
+
+          {!isNew && (
+            <button
+              onClick={handleDelete}
+              disabled={saving}
+              className="w-full py-3 text-terracotta-700 text-sm font-medium border border-terracotta-300 rounded-2xl active:bg-terracotta-50"
+            >
+              Eliminar de la lista
+            </button>
+          )}
         </div>
       </div>
     </div>
