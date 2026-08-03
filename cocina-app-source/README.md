@@ -1,26 +1,42 @@
-# Cocina Juan & Magdalena — App v2.1
+# Mi Cocina · Mi recetario personal
 
-App PWA familiar con sincronización en tiempo real vía Firebase Firestore y autenticación con PIN familiar.
+PWA familiar: recetario, planificación semanal y lista de la compra.
+Firebase Firestore + React + Vite. Uso compartido entre dos móviles.
 
-## Archivos importantes de este paquete
+## Estructura
 
-- `FIRESTORE_RULES.txt` — reglas de seguridad a pegar en la consola de Firebase
-- `menu_semana18_con_calorias.json` — menú listo para importar desde la app
-- `dist/` — build de producción (subir esta carpeta a Netlify)
-- `src/` — código fuente React
-
-## Cómo funciona la seguridad
-
-- El PIN se guarda en Firestore en `/config/auth` con reglas de acceso **bloqueadas** desde el cliente
-- Las reglas de Firestore leen ese PIN en el servidor (con `get()`) para validar nuevos dispositivos
-- Cada dispositivo que acierta el PIN se añade a `/allowed-users/{uid}` con su UID anónimo
-- Sesión persistente: la app pide el PIN **una sola vez por dispositivo**
-
-## Scripts
-
-```bash
-npm install       # primera vez
-npm run dev       # dev local (http://localhost:5173)
-npm run build     # genera dist/
-npm run preview   # sirve dist/
 ```
+src/
+  App.jsx              Navegación (Hoy · Semana · Compra + Más)
+  AuthGate.jsx         PIN familiar
+  firebase.js          Configuración Firestore
+  lib/
+    dates.js           Semana ISO, fechas reales de cada día
+    format.js          Formato de valores
+    ingredients.js     Limpieza, alias, cantidades y categorías de la compra
+    catalog.js         Categorías de plato, valoración, estadísticas de uso
+    plan.js            Crear semana, asignar platos, notas y horarios
+    db.js              Acceso a Firestore
+  data/
+    seedRecipes.js     Repertorio inicial (97 platos)
+  components/
+    ui.jsx             Cabecera, hojas modales, chips, iconos
+    meals.jsx          Tarjeta de plato, selector del recetario, editor manual
+  views/
+    Today.jsx          Pantalla de inicio (día actual)
+    Week.jsx           Planificador semanal
+    Catalog.jsx        Recetario con filtros, valoración y CRUD
+    Shopping.jsx       Listas por supermercado
+    Extras.jsx         Estadísticas, histórico e importar JSON
+```
+
+## Colecciones Firestore
+
+- `/config/auth` — PIN familiar (solo lectura desde la app)
+- `/menus/{año-semana}` — planificación semanal
+- `/recipes/{id}` — catálogo de recetas
+- `/shopping-lists/{id}` — listas de la compra
+
+## Despliegue
+
+`git push` → Netlify compila y publica automáticamente.

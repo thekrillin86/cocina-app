@@ -7,12 +7,12 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.png', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Cocina Juan y Magdalena',
-        short_name: 'Cocina',
-        description: 'Menús semanales familiares',
-        theme_color: '#C65D3E',
+        name: 'Mi Cocina · Mi recetario personal',
+        short_name: 'Mi Cocina',
+        description: 'Recetario, menús semanales y lista de la compra',
+        theme_color: '#17565A',
         background_color: '#FAF6F0',
         display: 'standalone',
         orientation: 'portrait',
