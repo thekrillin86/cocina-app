@@ -4,7 +4,7 @@
    de uso (veces cocinado / última vez) y ordenaciones.
    ============================================================ */
 import { normalize } from './ingredients'
-import { dateForDay, parseWeekId } from './dates'
+import { dateForDay } from './dates'
 
 /* ---------- TIPO DE COMIDA ---------- */
 export const MEAL_TYPES = [
@@ -257,8 +257,42 @@ export function mealToRecipe(meal, type) {
   }
 }
 
-/* Semana ISO legible: "Semana 32 · 2026" */
-export function weekLabel(wid) {
-  const { year, week } = parseWeekId(wid)
-  return `Semana ${week} · ${year}`
+/* ============================================================
+   RECETA VIVA
+
+   Cada plato del menú guarda una copia de la receta del momento en
+   que se eligió. Si esa receta sigue en el recetario, manda la del
+   recetario: es la que el usuario edita, y es la que debe alimentar
+   la lista de la compra. La copia guardada queda como respaldo para
+   los platos cuya receta ya se borró.
+
+   Es solo una capa de presentación: nunca se escribe de vuelta.
+   ============================================================ */
+
+export function indexRecipesById(recipes) {
+  return new Map((recipes || []).filter((r) => r.id).map((r) => [r.id, r]))
+}
+
+export function withLiveRecipe(meal, recipesById) {
+  if (!meal || !meal.recipeId || !recipesById) return meal
+  const viva = recipesById.get(meal.recipeId)
+  if (!viva || !viva.recipe) return meal
+  return {
+    ...meal,
+    recipe: viva.recipe,
+    calories: viva.calories ?? meal.calories ?? null,
+    proteins: viva.proteins ?? meal.proteins ?? null,
+  }
+}
+
+export function withLiveRecipes(menu, recipesById) {
+  if (!menu?.days || !recipesById?.size) return menu
+  return {
+    ...menu,
+    days: menu.days.map((d) => ({
+      ...d,
+      lunch: withLiveRecipe(d.lunch, recipesById),
+      dinner: withLiveRecipe(d.dinner, recipesById),
+    })),
+  }
 }

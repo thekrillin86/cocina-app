@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useMemo } from 'react'
 import {
   BarChart,
   Bar,
@@ -11,10 +11,11 @@ import {
   CartesianGrid,
 } from 'recharts'
 import { Header, Loading, EmptyState } from '../components/ui'
-import { useAllMenus, importMenuToFirestore, deleteMenu } from '../lib/db'
 
-export function StatsView() {
-  const { menus, loading } = useAllMenus()
+/* Esta vista es la unica que usa recharts (~400 KB). App la carga con
+   React.lazy para que no lastre el arranque en el movil. */
+
+export function StatsView({ menus, loading }) {
 
   const stats = useMemo(() => {
     if (!menus.length) return null
@@ -186,135 +187,6 @@ function StatCard({ label, value }) {
     <div className="card p-4">
       <p className="label-caps text-ink-500 mb-1">{label}</p>
       <p className="font-display text-3xl text-ink-900 leading-none">{value}</p>
-    </div>
-  )
-}
-
-export function HistoryView({ onOpen }) {
-  const { menus, loading } = useAllMenus()
-
-  if (loading) return <Loading />
-
-  return (
-    <div className="animate-fade-in-up">
-      <Header />
-      <div className="px-6">
-        <h1 className="font-display text-3xl text-ink-900 mb-6">Histórico</h1>
-
-        {!menus.length ? (
-          <EmptyState title="Aún no hay semanas guardadas" hint="Importa un menú para empezar." />
-        ) : (
-          <div className="space-y-3">
-            {menus.map((m) => {
-              const totalMeals =
-                m.days?.reduce(
-                  (acc, d) => acc + (d.lunch ? 1 : 0) + (d.dinner ? 1 : 0),
-                  0
-                ) || 0
-              return (
-                <div key={m.id} className="card p-4 flex items-center gap-2">
-                  <button onClick={() => onOpen(m.id)} className="flex-1 text-left min-w-0">
-                    <div className="flex justify-between items-start gap-3">
-                      <div className="min-w-0">
-                        <p className="label-caps text-terracotta-600">
-                          Semana {m.week} · {m.year}
-                        </p>
-                        <p className="font-display text-lg text-ink-900 mt-0.5 truncate">
-                          {m.dateRange || '—'}
-                        </p>
-                      </div>
-                      <div className="text-right text-xs text-ink-500 shrink-0">
-                        <p>{totalMeals} platos</p>
-                        <p className="mt-0.5">{m.persons || 4} personas</p>
-                      </div>
-                    </div>
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (!confirm(`¿Eliminar la semana ${m.week} de ${m.year}?`)) return
-                      await deleteMenu(m.id)
-                    }}
-                    className="shrink-0 text-ink-500 text-lg px-2"
-                    aria-label="Eliminar semana"
-                  >
-                    ×
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-export function ImportView({ onDone }) {
-  const [text, setText] = useState('')
-  const [status, setStatus] = useState(null)
-
-  const handleImport = async () => {
-    setStatus(null)
-    let parsed
-    try {
-      parsed = JSON.parse(text)
-    } catch (e) {
-      setStatus({ type: 'err', msg: 'JSON inválido: ' + e.message })
-      return
-    }
-    if (!parsed.week || !parsed.year || !Array.isArray(parsed.days)) {
-      setStatus({
-        type: 'err',
-        msg: 'Faltan campos obligatorios (week, year, days).',
-      })
-      return
-    }
-    try {
-      const wid = await importMenuToFirestore(parsed)
-      setStatus({ type: 'ok', msg: `Semana ${parsed.week} guardada ✓` })
-      setText('')
-      setTimeout(onDone, 1200)
-    } catch (e) {
-      setStatus({ type: 'err', msg: 'Error al guardar: ' + e.message })
-    }
-  }
-
-  return (
-    <div className="animate-fade-in-up">
-      <Header />
-      <div className="px-6">
-        <h1 className="font-display text-3xl text-ink-900 mb-2">Importar</h1>
-        <p className="text-sm text-ink-500 mb-6">
-          Pega el JSON que te genere Claude en el chat. Se sincronizará
-          automáticamente en los dos móviles.
-        </p>
-
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder='{ "week": 17, "year": 2026, ... }'
-          rows={14}
-          className="input font-mono text-xs resize-none"
-        />
-
-        {status && (
-          <p
-            className={`mt-3 text-sm ${
-              status.type === 'ok' ? 'text-sage-700' : 'text-terracotta-600'
-            }`}
-          >
-            {status.msg}
-          </p>
-        )}
-
-        <button
-          onClick={handleImport}
-          disabled={!text.trim()}
-          className="btn-primary w-full mt-4 disabled:opacity-40"
-        >
-          Importar semana
-        </button>
-      </div>
     </div>
   )
 }

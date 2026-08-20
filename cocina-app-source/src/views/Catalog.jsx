@@ -1,5 +1,15 @@
 import React, { useState, useMemo } from 'react'
-import { Header, Loading, EmptyState, Sheet, Field, Chip, Tag } from '../components/ui'
+import {
+  Header,
+  Loading,
+  EmptyState,
+  Sheet,
+  Field,
+  Chip,
+  Tag,
+  useConfirm,
+  useToast,
+} from '../components/ui'
 import { RecipeRow, RecipeBody } from '../components/meals'
 import { asMultiline, formatProteins } from '../lib/format'
 import { saveRecipe, deleteRecipe, bulkSaveRecipes } from '../lib/db'
@@ -15,7 +25,6 @@ import {
   lastCookedLabel,
   guessCategory,
   mealToRecipe,
-  ratingMeta,
 } from '../lib/catalog'
 import { normalize } from '../lib/ingredients'
 
@@ -27,6 +36,7 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
   const [detail, setDetail] = useState(null)
   const [editing, setEditing] = useState(null) // 'new' | recipe
   const [syncing, setSyncing] = useState(false)
+  const avisar = useToast()
 
   const list = useMemo(() => {
     let l = recipes
@@ -89,13 +99,13 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
       }
 
       if (!toSave.length) {
-        alert('Todo estaba ya sincronizado.')
+        avisar('Todo estaba ya sincronizado')
       } else {
         await bulkSaveRecipes(toSave)
-        alert(`Listo: ${toSave.length} recetas añadidas o completadas.`)
+        avisar(`${toSave.length} recetas añadidas o completadas`, 'ok')
       }
     } catch (e) {
-      alert('Error al sincronizar: ' + e.message)
+      avisar('Error al sincronizar: ' + (e?.message || e), 'error')
     } finally {
       setSyncing(false)
     }
@@ -306,6 +316,8 @@ function RecipeEditor({ recipe, onClose }) {
     steps: asMultiline(recipe?.recipe?.steps),
   }))
   const [saving, setSaving] = useState(false)
+  const confirmar = useConfirm()
+  const avisar = useToast()
   const up = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
   async function save() {
@@ -331,21 +343,26 @@ function RecipeEditor({ recipe, onClose }) {
       })
       onClose()
     } catch (e) {
-      alert('Error al guardar: ' + e.message)
+      avisar('No se ha podido guardar: ' + (e?.message || e), 'error')
     } finally {
       setSaving(false)
     }
   }
 
   async function remove() {
-    if (!confirm(`¿Eliminar "${recipe.name}" del recetario?`)) return
+    const ok = await confirmar({
+      title: `Eliminar «${recipe.name}»`,
+      message: 'Se borrará del recetario. Los menús que ya lo usan conservan su copia.',
+      confirmLabel: 'Eliminar',
+      danger: true,
+    })
+    if (!ok) return
     setSaving(true)
     try {
       await deleteRecipe(recipe.id)
       onClose()
     } catch (e) {
-      alert('Error al eliminar: ' + e.message)
-    } finally {
+      avisar('No se ha podido eliminar: ' + (e?.message || e), 'error')
       setSaving(false)
     }
   }

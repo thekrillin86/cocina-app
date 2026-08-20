@@ -1,15 +1,25 @@
 import React, { useState } from 'react'
-import { Header, Loading, Tag } from '../components/ui'
+import { Header, Loading, Sheet, Chip, useConfirm, useToast } from '../components/ui'
 import { MealPicker, MealDetail, ManualMealEditor } from '../components/meals'
 import {
   DAYS_ES,
   DAYS_SHORT,
-  getTodayWeekIndex,
   parseWeekId,
   dateForDay,
   formatDayMonth,
+  shiftWeekId,
+  weekRangeLabel,
 } from '../lib/dates'
-import { setMeal, setMealNote, setDaySchedule, normalizeDays, countMeals } from '../lib/plan'
+import {
+  setMeal,
+  setMealNote,
+  setDaySchedule,
+  setWeekPersons,
+  copyWeek,
+  normalizeDays,
+  countMeals,
+  COMENSALES_POR_DEFECTO,
+} from '../lib/plan'
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1)
 
@@ -17,7 +27,7 @@ export default function WeekView({
   menu,
   loading,
   wid,
-  todayId,
+  today,
   recipes,
   stats,
   onShiftWeek,
@@ -27,26 +37,56 @@ export default function WeekView({
   const [slot, setSlot] = useState(null) // { dayIndex, type }
   const [mode, setMode] = useState(null) // 'detail' | 'pick' | 'manual'
   const [editSchedule, setEditSchedule] = useState(null)
+  const [ajustes, setAjustes] = useState(false)
+  const [copiando, setCopiando] = useState(false)
+  const confirmar = useConfirm()
+  const avisar = useToast()
 
   if (loading) return <Loading />
 
-  const { week, year } = parseWeekId(wid)
-  const isCurrentWeek = wid === todayId
-  const todayIdx = getTodayWeekIndex()
+  const { week } = parseWeekId(wid)
+  const isCurrentWeek = wid === today.weekId
   const days = normalizeDays(menu, wid)
   const total = countMeals(menu)
   const current = slot ? days[slot.dayIndex]?.[slot.type] : null
   const dayLabel = slot ? cap(DAYS_ES[slot.dayIndex]) : ''
 
-  async function assign(meal) {
-    await setMeal(wid, menu, slot.dayIndex, slot.type, meal)
+  function cerrar() {
     setMode(null)
     setSlot(null)
+  }
+
+  async function assign(meal) {
+    await setMeal(wid, slot.dayIndex, slot.type, meal)
+    cerrar()
   }
 
   function open(dayIndex, type) {
     setSlot({ dayIndex, type })
     setMode(days[dayIndex]?.[type] ? 'detail' : 'pick')
+  }
+
+  async function copiarSemanaAnterior() {
+    const origen = shiftWeekId(wid, -1)
+    if (total > 0) {
+      const ok = await confirmar({
+        title: 'Copiar la semana anterior',
+        message: `Se reemplazarán los ${total} platos que ya hay en la semana ${week}. Esto no se puede deshacer.`,
+        confirmLabel: 'Reemplazar',
+        danger: true,
+      })
+      if (!ok) return
+    }
+    setCopiando(true)
+    try {
+      const copiados = await copyWeek(origen, wid)
+      if (copiados > 0) avisar(`${copiados} platos copiados de la semana anterior`, 'ok')
+      else avisar('La semana anterior está vacía, no hay nada que copiar')
+    } catch (e) {
+      avisar('No se ha podido copiar: ' + (e?.message || e), 'error')
+    } finally {
+      setCopiando(false)
+    }
   }
 
   return (
@@ -65,7 +105,7 @@ export default function WeekView({
           </button>
           <div className="text-center">
             <h1 className="font-display text-2xl text-ink-900 leading-tight">Semana {week}</h1>
-            <p className="text-xs text-ink-500">{menu?.dateRange || year}</p>
+            <p className="text-xs text-ink-500">{menu?.dateRange || weekRangeLabel(wid)}</p>
           </div>
           <button
             onClick={() => onShiftWeek(1)}
@@ -82,20 +122,30 @@ export default function WeekView({
               Volver a la semana actual
             </button>
           )}
-          <span className="text-xs text-ink-500">
-            {total} de 14 platos
-          </span>
+          <span className="text-xs text-ink-500">{total} de 14 platos</span>
+          <button onClick={() => setAjustes(true)} className="text-xs text-ink-500 font-medium">
+            {menu?.persons || COMENSALES_POR_DEFECTO} comensales ⚙️
+          </button>
         </div>
 
-        {/* Acción principal: pasar a la compra */}
-        {total > 0 && (
+        {/* Acciones principales */}
+        <div className="space-y-2 mb-5">
+          {total > 0 && (
+            <button
+              onClick={() => onSendToShopping(wid)}
+              className="btn-primary w-full text-sm py-3"
+            >
+              🛒 Pasar ingredientes a la compra
+            </button>
+          )}
           <button
-            onClick={() => onSendToShopping(wid)}
-            className="btn-primary w-full mb-5 text-sm py-3"
+            onClick={copiarSemanaAnterior}
+            disabled={copiando}
+            className="w-full py-3 rounded-full bg-teal-50 text-teal-700 text-sm font-medium active:bg-teal-100 disabled:opacity-50"
           >
-            🛒 Pasar ingredientes a la compra
+            {copiando ? 'Copiando…' : '📋 Copiar la semana anterior'}
           </button>
-        )}
+        </div>
 
         {/* Días */}
         <div className="space-y-3 pb-6">
@@ -104,7 +154,7 @@ export default function WeekView({
               key={i}
               day={d}
               index={i}
-              isToday={isCurrentWeek && i === todayIdx}
+              isToday={isCurrentWeek && i === today.dayIndex}
               dateLabel={formatDayMonth(dateForDay(wid, i))}
               onOpen={open}
               onEditSchedule={() => setEditSchedule({ index: i, value: d.schedule || '' })}
@@ -118,19 +168,13 @@ export default function WeekView({
           meal={current}
           mealType={slot.type}
           dayLabel={dayLabel}
-          onClose={() => {
-            setMode(null)
-            setSlot(null)
-          }}
+          onClose={cerrar}
           onChange={() => setMode('pick')}
           onManual={() => setMode('manual')}
-          onSetNote={async (note) => {
-            await setMealNote(wid, menu, slot.dayIndex, slot.type, note)
-          }}
+          onSetNote={(note) => setMealNote(wid, slot.dayIndex, slot.type, note)}
           onRemove={async () => {
-            await setMeal(wid, menu, slot.dayIndex, slot.type, null)
-            setMode(null)
-            setSlot(null)
+            await setMeal(wid, slot.dayIndex, slot.type, null)
+            cerrar()
           }}
         />
       )}
@@ -143,10 +187,7 @@ export default function WeekView({
           dayLabel={dayLabel}
           onPick={assign}
           onManual={() => setMode('manual')}
-          onClose={() => {
-            setMode(null)
-            setSlot(null)
-          }}
+          onClose={cerrar}
         />
       )}
 
@@ -156,10 +197,7 @@ export default function WeekView({
           mealType={slot.type}
           dayLabel={dayLabel}
           onSave={assign}
-          onClose={() => {
-            setMode(null)
-            setSlot(null)
-          }}
+          onClose={cerrar}
         />
       )}
 
@@ -169,8 +207,19 @@ export default function WeekView({
           dayLabel={cap(DAYS_ES[editSchedule.index])}
           onClose={() => setEditSchedule(null)}
           onSave={async (v) => {
-            await setDaySchedule(wid, menu, editSchedule.index, v)
+            await setDaySchedule(wid, editSchedule.index, v)
             setEditSchedule(null)
+          }}
+        />
+      )}
+
+      {ajustes && (
+        <PersonsModal
+          value={menu?.persons || COMENSALES_POR_DEFECTO}
+          onClose={() => setAjustes(false)}
+          onSave={async (n) => {
+            await setWeekPersons(wid, n)
+            setAjustes(false)
           }}
         />
       )}
@@ -202,9 +251,7 @@ function DayCard({ day, index, isToday, dateLabel, onOpen, onEditSchedule }) {
         </button>
       </div>
 
-      {day.schedule && (
-        <p className="text-xs text-ink-500 italic mb-3 -mt-1">{day.schedule}</p>
-      )}
+      {day.schedule && <p className="text-xs text-ink-500 italic mb-3 -mt-1">{day.schedule}</p>}
 
       <div className="grid grid-cols-2 gap-2">
         <Slot label="Comida" meal={day.lunch} onClick={() => onOpen(index, 'lunch')} />
@@ -247,49 +294,96 @@ function ScheduleModal({ value, dayLabel, onClose, onSave }) {
     'Teletrabajo · cocinar cuando quiera',
     '🧗 Escalar · tupper listo antes de salir',
   ]
+
   return (
-    <div className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-cream-50 w-full max-w-md rounded-t-3xl sm:rounded-3xl safe-bottom max-h-[92vh] overflow-y-auto">
-        <div className="sticky top-0 bg-cream-50 border-b border-cream-200 px-5 py-4 flex items-center justify-between">
-          <button onClick={onClose} className="text-ink-500 text-sm font-medium">
-            Cancelar
-          </button>
-          <p className="font-display text-lg">{dayLabel}</p>
-          <button
-            onClick={() => onSave(text.trim())}
-            className="text-terracotta-600 text-sm font-semibold"
-          >
-            Guardar
-          </button>
-        </div>
-        <div className="p-5 space-y-3">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            placeholder="Ej: Mañana ocupada · cocinar la noche anterior"
-            className="input resize-none"
-          />
-          <p className="label-caps text-ink-500">Atajos</p>
-          <div className="space-y-2">
-            {presets.map((p) => (
-              <button
-                key={p}
-                onClick={() => setText(p)}
-                className="w-full text-left text-sm px-4 py-3 rounded-2xl bg-cream-100 text-ink-700 active:bg-cream-200"
-              >
-                {p}
-              </button>
-            ))}
+    <Sheet
+      title={dayLabel}
+      onClose={onClose}
+      onCloseLabel="Cancelar"
+      action={
+        <button
+          onClick={() => onSave(text.trim())}
+          className="text-terracotta-600 text-sm font-semibold"
+        >
+          Guardar
+        </button>
+      }
+    >
+      <div className="p-5 space-y-3">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={3}
+          placeholder="Ej: Mañana ocupada · cocinar la noche anterior"
+          className="input resize-none"
+        />
+        <p className="label-caps text-ink-500">Atajos</p>
+        <div className="space-y-2">
+          {presets.map((p) => (
             <button
-              onClick={() => setText('')}
-              className="w-full text-left text-sm px-4 py-3 rounded-2xl text-ink-500"
+              key={p}
+              onClick={() => setText(p)}
+              className="w-full text-left text-sm px-4 py-3 rounded-2xl bg-cream-100 text-ink-700 active:bg-cream-200"
             >
-              Sin horario
+              {p}
             </button>
-          </div>
+          ))}
+          <button
+            onClick={() => setText('')}
+            className="w-full text-left text-sm px-4 py-3 rounded-2xl text-ink-500"
+          >
+            Sin horario
+          </button>
         </div>
       </div>
-    </div>
+    </Sheet>
+  )
+}
+
+function PersonsModal({ value, onClose, onSave }) {
+  const [n, setN] = useState(value)
+
+  return (
+    <Sheet
+      title="Comensales de la semana"
+      onClose={onClose}
+      onCloseLabel="Cancelar"
+      action={
+        <button onClick={() => onSave(n)} className="text-terracotta-600 text-sm font-semibold">
+          Guardar
+        </button>
+      }
+    >
+      <div className="p-5 space-y-4">
+        <div className="flex items-center justify-center gap-4">
+          <button
+            onClick={() => setN((v) => Math.max(1, v - 1))}
+            className="w-12 h-12 rounded-full bg-cream-200 text-ink-700 text-2xl active:bg-cream-300"
+            aria-label="Uno menos"
+          >
+            −
+          </button>
+          <span className="font-display text-5xl text-ink-900 w-16 text-center">{n}</span>
+          <button
+            onClick={() => setN((v) => Math.min(20, v + 1))}
+            className="w-12 h-12 rounded-full bg-cream-200 text-ink-700 text-2xl active:bg-cream-300"
+            aria-label="Uno más"
+          >
+            +
+          </button>
+        </div>
+        <div className="flex justify-center gap-2">
+          {[2, 3, 4, 5].map((v) => (
+            <Chip key={v} active={n === v} onClick={() => setN(v)}>
+              {v}
+            </Chip>
+          ))}
+        </div>
+        <p className="text-xs text-ink-500 text-center">
+          Se guarda con la semana, junto al histórico. Las cantidades de las recetas no se
+          reescalan solas.
+        </p>
+      </div>
+    </Sheet>
   )
 }

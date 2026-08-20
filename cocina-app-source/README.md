@@ -9,26 +9,52 @@ Firebase Firestore + React + Vite. Uso compartido entre dos móviles.
 src/
   App.jsx              Navegación (Hoy · Semana · Compra + Más)
   AuthGate.jsx         PIN familiar
-  firebase.js          Configuración Firestore
+  firebase.js          Firestore con caché persistente (funciona sin cobertura)
   lib/
     dates.js           Semana ISO, fechas reales de cada día
+    useToday.js        Fecha de hoy revalidada (la PWA vive días abierta)
     format.js          Formato de valores
     ingredients.js     Limpieza, alias, cantidades y categorías de la compra
-    catalog.js         Categorías de plato, valoración, estadísticas de uso
-    plan.js            Crear semana, asignar platos, notas y horarios
+    catalog.js         Categorías de plato, valoración, estadísticas, receta viva
+    plan.js            Semana, platos, notas, horarios y comensales
     db.js              Acceso a Firestore
   data/
     seedRecipes.js     Repertorio inicial (97 platos)
   components/
-    ui.jsx             Cabecera, hojas modales, chips, iconos
+    ui.jsx             Cabecera, hojas modales, diálogos, avisos, iconos
     meals.jsx          Tarjeta de plato, selector del recetario, editor manual
   views/
     Today.jsx          Pantalla de inicio (día actual)
     Week.jsx           Planificador semanal
     Catalog.jsx        Recetario con filtros, valoración y CRUD
     Shopping.jsx       Listas por supermercado
-    Extras.jsx         Estadísticas, histórico e importar JSON
+    Stats.jsx          Gráficas (se carga bajo demanda: arrastra recharts)
+    History.jsx        Semanas guardadas
+    Import.jsx         Importar un menú en JSON
 ```
+
+## Cómo funciona por dentro
+
+**Semanas ISO.** Los documentos se llaman `AAAA-SS` y todas las fechas
+derivadas se calculan en UTC anclando en el 4 de enero, que por
+definición cae siempre en la semana 1.
+
+**Escrituras concurrentes.** La app la usan dos móviles a la vez, así
+que cada cambio (asignar un plato, marcar un producto) se hace dentro
+de una transacción que relee el documento. Sin eso, el último en
+guardar borraba el cambio del otro.
+
+**Del menú a la compra.** `extractItemsFromMenu` parsea los
+ingredientes de cada receta de la semana: separa cantidad de producto,
+resuelve rangos ("90 - 100 g" → 100 g), fusiona variantes bajo un
+nombre canónico ("AOVE" y "aceite de oliva virgen extra" son lo mismo)
+y suma cantidades convirtiendo unidades. Cada producto recuerda de qué
+receta, qué día y qué semana viene, y `mergeShoppingItems` usa esa
+huella para que reimportar la misma semana no duplique nada.
+
+**Receta viva.** Los platos del menú guardan una copia de la receta,
+pero si esa receta sigue en el recetario se muestra la del recetario,
+que es la que se edita. La copia queda como respaldo histórico.
 
 ## Colecciones Firestore
 
@@ -36,6 +62,20 @@ src/
 - `/menus/{año-semana}` — planificación semanal
 - `/recipes/{id}` — catálogo de recetas
 - `/shopping-lists/{id}` — listas de la compra
+
+Ver `FIRESTORE_RULES.txt` para las reglas y sus límites actuales.
+
+## Desarrollo
+
+```
+npm install
+npm run dev      # servidor local
+npm test         # tests de las librerías (fechas e ingredientes)
+npm run build    # compilar para producción
+```
+
+Los tests cubren la aritmética de semanas ISO y todo el parseo de
+ingredientes, que es donde más fácil es romper algo sin enterarse.
 
 ## Despliegue
 

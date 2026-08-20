@@ -1,9 +1,17 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, lazy, Suspense } from 'react'
 import { AuthGate } from './AuthGate'
-import { getISOWeek, weekId, shiftWeekId } from './lib/dates'
+import { shiftWeekId } from './lib/dates'
+import { useToday } from './lib/useToday'
 import { useMenu, useAllMenus, useRecipes } from './lib/db'
-import { computeUsageStats, guessCategory } from './lib/catalog'
 import {
+  computeUsageStats,
+  guessCategory,
+  indexRecipesById,
+  withLiveRecipes,
+} from './lib/catalog'
+import {
+  DialogProvider,
+  Loading,
   IconToday,
   IconWeek,
   IconShopping,
@@ -17,13 +25,22 @@ import TodayView from './views/Today'
 import WeekView from './views/Week'
 import CatalogView from './views/Catalog'
 import ShoppingView from './views/Shopping'
-import { StatsView, HistoryView, ImportView } from './views/Extras'
+import { HistoryView } from './views/History'
+import { ImportView } from './views/Import'
+
+// Las graficas arrastran recharts (~400 KB): solo se descargan si se
+// entra en Estadisticas.
+const StatsView = lazy(() =>
+  import('./views/Stats').then((m) => ({ default: m.StatsView }))
+)
 
 export default function App() {
   return (
-    <AuthGate>
-      <MainApp />
-    </AuthGate>
+    <DialogProvider>
+      <AuthGate>
+        <MainApp />
+      </AuthGate>
+    </DialogProvider>
   )
 }
 
@@ -35,24 +52,27 @@ function MainApp() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [shoppingWeek, setShoppingWeek] = useState(null)
 
-  const today = useMemo(() => {
-    const { year, week } = getISOWeek()
-    return { year, week, id: weekId(year, week) }
-  }, [])
+  // Se revalida sola al pasar de medianoche o al volver a primer plano
+  const today = useToday()
 
-  const activeWeekId = selectedWeekId || today.id
-  const { menu, loading } = useMenu(activeWeekId)
-  const { menus } = useAllMenus()
+  const activeWeekId = selectedWeekId || today.weekId
+  const { menu: menuCrudo, loading } = useMenu(activeWeekId)
+  const { menus, loading: loadingMenus } = useAllMenus()
   const { recipes, loading: loadingRecipes } = useRecipes()
-
-  // Estadísticas de uso (veces cocinado / última vez) a partir del histórico
-  const stats = useMemo(() => computeUsageStats(menus), [menus])
 
   // Recetas con la categoría siempre resuelta
   const catalog = useMemo(
     () => recipes.map((r) => ({ ...r, category: r.category || guessCategory(r.name) })),
     [recipes]
   )
+  const recipesById = useMemo(() => indexRecipesById(catalog), [catalog])
+
+  // Los platos enseñan la receta que hay hoy en el recetario, no la
+  // copia congelada del día en que se eligieron.
+  const menu = useMemo(() => withLiveRecipes(menuCrudo, recipesById), [menuCrudo, recipesById])
+
+  // Estadísticas de uso (veces cocinado / última vez) a partir del histórico
+  const stats = useMemo(() => computeUsageStats(menus), [menus])
 
   const go = (v) => {
     if (v === 'today') setSelectedWeekId(null)
@@ -67,14 +87,10 @@ function MainApp() {
             menu={menu}
             loading={loading}
             wid={activeWeekId}
-            isCurrentWeek={activeWeekId === today.id}
+            today={today}
             recipes={catalog}
             stats={stats}
             onGoToWeek={() => setView('week')}
-            onBackToToday={() => {
-              setSelectedWeekId(null)
-              setView('today')
-            }}
           />
         )}
 
@@ -83,7 +99,7 @@ function MainApp() {
             menu={menu}
             loading={loading}
             wid={activeWeekId}
-            todayId={today.id}
+            today={today}
             recipes={catalog}
             stats={stats}
             onShiftWeek={(delta) => setSelectedWeekId(shiftWeekId(activeWeekId, delta))}
@@ -97,8 +113,9 @@ function MainApp() {
 
         {view === 'shopping' && (
           <ShoppingView
-            todayWeekId={today.id}
+            todayWeekId={today.weekId}
             menus={menus}
+            recipesById={recipesById}
             autoWeek={shoppingWeek}
             onAutoWeekUsed={() => setShoppingWeek(null)}
           />
@@ -108,10 +125,17 @@ function MainApp() {
           <CatalogView recipes={catalog} loading={loadingRecipes} menus={menus} stats={stats} />
         )}
 
-        {view === 'stats' && <StatsView />}
+        {view === 'stats' && (
+          <Suspense fallback={<Loading />}>
+            <StatsView menus={menus} loading={loadingMenus} />
+          </Suspense>
+        )}
 
         {view === 'history' && (
           <HistoryView
+            menus={menus}
+            loading={loadingMenus}
+            todayWeekId={today.weekId}
             onOpen={(wid) => {
               setSelectedWeekId(wid)
               setView('week')
@@ -150,6 +174,7 @@ function BottomNav({ view, setView, onMore }) {
             <button
               key={it.id}
               onClick={() => setView(it.id)}
+              aria-current={active ? 'page' : undefined}
               className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-colors ${
                 active ? 'text-terracotta-600' : 'text-ink-500'
               }`}

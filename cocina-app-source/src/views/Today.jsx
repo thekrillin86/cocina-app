@@ -1,35 +1,29 @@
 import React, { useState } from 'react'
-import { Header, Loading, EmptyState, Tag } from '../components/ui'
+import { Header, Loading, EmptyState } from '../components/ui'
 import { MealCard, MealPicker, MealDetail, ManualMealEditor } from '../components/meals'
-import { getTodayWeekIndex, formatLongDate, DAYS_ES } from '../lib/dates'
+import { formatLongDate, DAYS_ES } from '../lib/dates'
 import { setMeal, setMealNote, normalizeDays } from '../lib/plan'
 
-export default function TodayView({
-  menu,
-  loading,
-  wid,
-  isCurrentWeek,
-  recipes,
-  stats,
-  onGoToWeek,
-  onBackToToday,
-}) {
+export default function TodayView({ menu, loading, wid, today, recipes, stats, onGoToWeek }) {
   const [slot, setSlot] = useState(null) // { type }
   const [mode, setMode] = useState(null) // 'detail' | 'pick' | 'manual'
-  const todayIdx = getTodayWeekIndex()
-  const now = new Date()
 
   if (loading) return <Loading />
 
+  const todayIdx = today.dayIndex
   const days = menu ? normalizeDays(menu, wid) : null
   const todayData = days?.[todayIdx]
   const dayLabel = DAYS_ES[todayIdx]
   const current = slot ? todayData?.[slot.type] : null
 
-  async function assign(meal) {
-    await setMeal(wid, menu, todayIdx, slot.type, meal)
+  function cerrar() {
     setMode(null)
     setSlot(null)
+  }
+
+  async function assign(meal) {
+    await setMeal(wid, todayIdx, slot.type, meal)
+    cerrar()
   }
 
   function open(type) {
@@ -42,7 +36,7 @@ export default function TodayView({
       <div className="px-6 pt-4">
         <Header />
         <EmptyState
-          title={isCurrentWeek ? 'Todavía no hay menú esta semana' : 'Semana sin planificar'}
+          title="Todavía no hay menú esta semana"
           hint="Ve a «Semana» y ve eligiendo platos del recetario para cada día."
           action={
             <button onClick={onGoToWeek} className="btn-primary">
@@ -59,18 +53,12 @@ export default function TodayView({
       <Header />
 
       <div className="px-6">
-        {!isCurrentWeek && (
-          <button onClick={onBackToToday} className="mb-4 text-sm text-terracotta-600 font-medium">
-            ← Volver a hoy
-          </button>
-        )}
-
         <div className="mb-6">
           <p className="label-caps text-terracotta-600 mb-1">
             Semana {menu.week} · {menu.year}
           </p>
           <h1 className="font-display text-4xl leading-tight text-ink-900">
-            {formatLongDate(now)}
+            {formatLongDate(today.date)}
           </h1>
           {todayData?.schedule && (
             <p className="text-ink-500 mt-2 text-sm italic">{todayData.schedule}</p>
@@ -99,19 +87,13 @@ export default function TodayView({
           meal={current}
           mealType={slot.type}
           dayLabel={dayLabel}
-          onClose={() => {
-            setMode(null)
-            setSlot(null)
-          }}
+          onClose={cerrar}
           onChange={() => setMode('pick')}
           onManual={() => setMode('manual')}
-          onSetNote={async (note) => {
-            await setMealNote(wid, menu, todayIdx, slot.type, note)
-          }}
+          onSetNote={(note) => setMealNote(wid, todayIdx, slot.type, note)}
           onRemove={async () => {
-            await setMeal(wid, menu, todayIdx, slot.type, null)
-            setMode(null)
-            setSlot(null)
+            await setMeal(wid, todayIdx, slot.type, null)
+            cerrar()
           }}
         />
       )}
@@ -124,10 +106,7 @@ export default function TodayView({
           dayLabel={dayLabel}
           onPick={assign}
           onManual={() => setMode('manual')}
-          onClose={() => {
-            setMode(null)
-            setSlot(null)
-          }}
+          onClose={cerrar}
         />
       )}
 
@@ -137,10 +116,7 @@ export default function TodayView({
           mealType={slot.type}
           dayLabel={dayLabel}
           onSave={assign}
-          onClose={() => {
-            setMode(null)
-            setSlot(null)
-          }}
+          onClose={cerrar}
         />
       )}
     </div>

@@ -1,3 +1,24 @@
+==========================================================
+REGLAS DE FIRESTORE — proyecto cocina-juanlc
+==========================================================
+
+ESTADO ACTUAL (las que están publicadas ahora mismo)
+----------------------------------------------------------
+Sirven, pero conviene saber qué protegen y qué no.
+
+La app entra con signInAnonymously(), así que "request.auth != null"
+lo cumple CUALQUIERA que abra la web: la configuración de Firebase va
+en el JavaScript publicado (es pública por diseño) y con ella se puede
+pedir un usuario anónimo desde fuera de la app.
+
+Consecuencia: hoy la base de datos es legible y escribible por
+cualquiera que se moleste en mirar el bundle, y el PIN de /config/auth
+se puede leer en claro. El PIN es una puerta de cortesía en el
+cliente, no una medida de seguridad.
+
+Para un recetario familiar el riesgo es bajo, pero está aquí escrito
+para que sea una decisión y no un descuido.
+
 rules_version = '2';
 
 service cloud.firestore {
@@ -14,14 +35,72 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
-    // /shopping-lists — listas de la compra (Lidl, Mercadona...)
+    // /shopping-lists — listas de la compra
     match /shopping-lists/{listId} {
       allow read, write: if request.auth != null;
     }
 
-    // /recipes — recetas manuales (creadas desde la app)
+    // /recipes — recetas del recetario
     match /recipes/{recipeId} {
       allow read, write: if request.auth != null;
     }
   }
 }
+
+
+==========================================================
+MEJORA RECOMENDADA: dos cuentas reales
+==========================================================
+
+Cierra el agujero de arriba. NO pegues estas reglas hasta haber
+completado los pasos 1 y 2, o te quedas fuera de tu propia app.
+
+PASO 1 — Crear las dos cuentas
+  Consola de Firebase → Authentication → Sign-in method
+    · Activar "Correo electrónico/contraseña"
+    · (Opcional) desactivar "Anónimo" cuando ya no se use
+  Authentication → Users → Add user
+    · Crear la cuenta de Juan y la de Magda
+    · Copiar el UID de cada una (columna "User UID")
+
+PASO 2 — Cambiar el login de la app
+  Sustituir signInAnonymously() por signInWithEmailAndPassword()
+  en src/AuthGate.jsx: pedir correo y contraseña en vez del PIN.
+  Firebase ya guarda la sesión (browserLocalPersistence), así que
+  se seguirá pidiendo solo la primera vez en cada móvil.
+
+PASO 3 — Publicar estas reglas, con los UID reales
+  Consola de Firebase → Firestore Database → Rules
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Solo estos dos usuarios, por UID
+    function esDeCasa() {
+      return request.auth != null && request.auth.uid in [
+        'UID_DE_JUAN',
+        'UID_DE_MAGDA'
+      ];
+    }
+
+    // Con cuentas reales, /config/auth ya no hace falta:
+    // el PIN deja de existir. Se deja cerrado del todo.
+    match /config/{doc} {
+      allow read, write: if false;
+    }
+
+    match /menus/{weekId}        { allow read, write: if esDeCasa(); }
+    match /shopping-lists/{listId} { allow read, write: if esDeCasa(); }
+    match /recipes/{recipeId}    { allow read, write: if esDeCasa(); }
+
+    // Todo lo demás, cerrado
+    match /{document=**} { allow read, write: if false; }
+  }
+}
+
+PASO 4 — Comprobar antes de dar por bueno
+  Consola → Firestore → Rules → Playground:
+    · lectura de /menus/2026-34 autenticado con el UID de Juan  → permitida
+    · la misma lectura sin autenticar                            → denegada

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { asMultiline, formatProteins } from '../lib/format'
-import { Sheet, Field, Chip, Tag, EmptyState } from './ui'
+import { Sheet, Field, Chip, Tag, EmptyState, useToast } from './ui'
 import {
   DISH_CATEGORIES,
   CATEGORY_META,
@@ -13,6 +13,7 @@ import {
   recipeToMeal,
   guessCategory,
 } from '../lib/catalog'
+import { normalize } from '../lib/ingredients'
 
 export const MEAL_NOTES = ['Tupper niños', 'Del día anterior', 'Hacer el doble']
 
@@ -133,11 +134,11 @@ export function MealPicker({ recipes, stats, mealType, dayLabel, onPick, onManua
     }
     if (category !== 'todas') l = l.filter((r) => (r.category || guessCategory(r.name)) === category)
     if (search.trim()) {
-      const q = search.toLowerCase()
+      // normalize() quita acentos: "salmon" tiene que encontrar "Salmón"
+      const q = normalize(search)
       l = l.filter(
         (r) =>
-          r.name.toLowerCase().includes(q) ||
-          formatProteins(r.proteins).toLowerCase().includes(q)
+          normalize(r.name).includes(q) || normalize(formatProteins(r.proteins)).includes(q)
       )
     }
     return sortRecipes(l, sort, stats)
@@ -329,6 +330,7 @@ export function ManualMealEditor({ meal, mealType, dayLabel, onSave, onClose }) 
     steps: asMultiline(meal?.recipe?.steps),
   }))
   const [saving, setSaving] = useState(false)
+  const avisar = useToast()
   const up = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
   async function save() {
@@ -352,7 +354,7 @@ export function ManualMealEditor({ meal, mealType, dayLabel, onSave, onClose }) 
       })
       onClose()
     } catch (e) {
-      alert('Error al guardar: ' + e.message)
+      avisar('Error al guardar: ' + (e?.message || e), 'error')
     } finally {
       setSaving(false)
     }

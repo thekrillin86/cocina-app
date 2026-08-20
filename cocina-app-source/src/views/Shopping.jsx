@@ -1,20 +1,35 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { Header, Loading, EmptyState, Sheet, Field, Chip, Tag } from '../components/ui'
+import {
+  Header,
+  Loading,
+  EmptyState,
+  Sheet,
+  Field,
+  Chip,
+  Tag,
+  useConfirm,
+  useToast,
+} from '../components/ui'
 import {
   CATEGORIES,
   categorize,
   extractItemsFromMenu,
-  combineQuantities,
   bumpQuantity,
-  normalize,
   firstNeededIndex,
 } from '../lib/ingredients'
+import { withLiveRecipes } from '../lib/catalog'
 import {
   useShoppingLists,
   createShoppingList,
-  updateShoppingList,
-  deleteShoppingList,
   renameShoppingList,
+  deleteShoppingList,
+  addShoppingItem,
+  updateShoppingItem,
+  toggleShoppingItem,
+  removeShoppingItem,
+  clearCheckedItems,
+  clearAllItems,
+  importWeekIntoList,
 } from '../lib/db'
 import { daysUntil, weekRangeLabel, parseWeekId, shiftWeekId } from '../lib/dates'
 
@@ -26,7 +41,13 @@ const CATEGORY_ORDER = [...CATEGORIES.map((c) => c.key), 'otros']
 
 const SUPERMARKETS = ['Lidl', 'Mercadona', 'Carrefour', 'Eroski', 'Alcampo', 'Farmacia']
 
-export default function ShoppingView({ todayWeekId, menus, autoWeek, onAutoWeekUsed }) {
+export default function ShoppingView({
+  todayWeekId,
+  menus,
+  recipesById,
+  autoWeek,
+  onAutoWeekUsed,
+}) {
   const { lists, loading } = useShoppingLists()
   const [activeId, setActiveId] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
@@ -35,18 +56,30 @@ export default function ShoppingView({ todayWeekId, menus, autoWeek, onAutoWeekU
   const [editingId, setEditingId] = useState(null)
   const [manageList, setManageList] = useState(false)
   const [presetWeek, setPresetWeek] = useState(null)
+  const avisar = useToast()
 
+  // Si la lista activa desaparece (borrada desde el otro móvil), se
+  // salta a la primera que quede.
   useEffect(() => {
-    if (!activeId && lists.length) setActiveId(lists[0].id)
+    if (!lists.length) {
+      if (activeId) setActiveId(null)
+      return
+    }
+    if (!activeId || !lists.some((l) => l.id === activeId)) setActiveId(lists[0].id)
   }, [lists, activeId])
 
-  // Al llegar desde «Pasar ingredientes a la compra», abre el importador ya apuntando a esa semana
+  // Al llegar desde «Pasar ingredientes a la compra», abre el
+  // importador ya apuntando a esa semana.
   useEffect(() => {
-    if (autoWeek && lists.length) {
-      setPresetWeek(autoWeek)
-      setShowImport(true)
+    if (!autoWeek) return
+    if (!lists.length) {
+      avisar('Crea primero una lista de la compra')
       onAutoWeekUsed?.()
+      return
     }
+    setPresetWeek(autoWeek)
+    setShowImport(true)
+    onAutoWeekUsed?.()
   }, [autoWeek, lists.length])
 
   if (loading) return <Loading />
@@ -127,6 +160,7 @@ export default function ShoppingView({ todayWeekId, menus, autoWeek, onAutoWeekU
         <ImportMenuModal
           list={list}
           menus={menus}
+          recipesById={recipesById}
           todayWeekId={todayWeekId}
           presetWeek={presetWeek}
           onClose={() => {
@@ -155,6 +189,8 @@ export default function ShoppingView({ todayWeekId, menus, autoWeek, onAutoWeekU
    ============================================================ */
 function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
   const items = list.items || []
+  const confirmar = useConfirm()
+  const avisar = useToast()
 
   const { pending, checked } = useMemo(() => {
     const p = {}
@@ -176,31 +212,40 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
         if (ia == null && ib == null) return (a.name || '').localeCompare(b.name || '', 'es')
         if (ia == null) return 1
         if (ib == null) return -1
-        return ia - ib
+        return ia - ib || (a.name || '').localeCompare(b.name || '', 'es')
       })
     }
     return { pending: p, checked: c }
   }, [items])
 
-  async function toggle(id) {
-    await updateShoppingList(
-      list.id,
-      items.map((it) => (it.id === id ? { ...it, checked: !it.checked } : it))
-    )
+  async function conAviso(accion, mensajeError) {
+    try {
+      await accion()
+    } catch (e) {
+      avisar(mensajeError + ': ' + (e?.message || e), 'error')
+    }
   }
 
-  async function remove(id) {
-    await updateShoppingList(list.id, items.filter((it) => it.id !== id))
+  async function borrarComprados() {
+    const ok = await confirmar({
+      title: 'Borrar los comprados',
+      message: `Se quitarán de la lista los ${checked.length} productos ya marcados.`,
+      confirmLabel: 'Borrar',
+      danger: true,
+    })
+    if (!ok) return
+    await conAviso(() => clearCheckedItems(list.id), 'No se han podido borrar')
   }
 
-  async function clearChecked() {
-    if (!confirm('¿Borrar los productos ya comprados?')) return
-    await updateShoppingList(list.id, items.filter((it) => !it.checked))
-  }
-
-  async function clearAll() {
-    if (!confirm('¿Vaciar toda la lista?')) return
-    await updateShoppingList(list.id, [])
+  async function vaciarTodo() {
+    const ok = await confirmar({
+      title: 'Vaciar la lista entera',
+      message: `Se borrarán los ${items.length} productos de «${list.name}». Esto no se puede deshacer.`,
+      confirmLabel: 'Vaciar',
+      danger: true,
+    })
+    if (!ok) return
+    await conAviso(() => clearAllItems(list.id), 'No se ha podido vaciar')
   }
 
   return (
@@ -212,7 +257,7 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
         </p>
         <div className="flex gap-3">
           {checked.length > 0 && (
-            <button onClick={clearChecked} className="text-xs text-ink-500 font-medium">
+            <button onClick={borrarComprados} className="text-xs text-ink-500 font-medium">
               Borrar comprados
             </button>
           )}
@@ -237,7 +282,7 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
       {!items.length ? (
         <EmptyState
           title="Lista vacía"
-          hint='Añade productos a mano o pulsa «Del menú» para traer los ingredientes de la semana planificada.'
+          hint="Añade productos a mano o pulsa «Del menú» para traer los ingredientes de la semana planificada."
         />
       ) : (
         <div className="space-y-5 pb-8">
@@ -257,8 +302,12 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
                     <Item
                       key={it.id}
                       item={it}
-                      onToggle={() => toggle(it.id)}
-                      onDelete={() => remove(it.id)}
+                      onToggle={() =>
+                        conAviso(() => toggleShoppingItem(list.id, it.id), 'No se ha podido marcar')
+                      }
+                      onDelete={() =>
+                        conAviso(() => removeShoppingItem(list.id, it.id), 'No se ha podido borrar')
+                      }
                       onEdit={() => onEdit(it)}
                     />
                   ))}
@@ -275,8 +324,12 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
                   <Item
                     key={it.id}
                     item={it}
-                    onToggle={() => toggle(it.id)}
-                    onDelete={() => remove(it.id)}
+                    onToggle={() =>
+                      conAviso(() => toggleShoppingItem(list.id, it.id), 'No se ha podido marcar')
+                    }
+                    onDelete={() =>
+                      conAviso(() => removeShoppingItem(list.id, it.id), 'No se ha podido borrar')
+                    }
                     onEdit={() => onEdit(it)}
                   />
                 ))}
@@ -285,7 +338,7 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
           )}
 
           <button
-            onClick={clearAll}
+            onClick={vaciarTodo}
             className="w-full py-3 text-terracotta-700 text-sm font-medium border border-terracotta-300 rounded-2xl mt-4 active:bg-terracotta-50"
           >
             Vaciar lista entera
@@ -300,7 +353,7 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
 function urgency(item) {
   const dates = (item.recipes || []).map((r) => r.isoDate).filter(Boolean)
   if (!dates.length) return null
-  const soonest = dates.sort()[0]
+  const soonest = dates.slice().sort()[0]
   const d = daysUntil(new Date(soonest + 'T00:00:00Z'))
   if (d < 0) return { text: 'Ya pasó', tone: 'neutral' }
   if (d === 0) return { text: 'Hoy', tone: 'warn' }
@@ -318,10 +371,11 @@ function Item({ item, onToggle, onDelete, onEdit }) {
         className={`shrink-0 mt-0.5 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
           item.checked ? 'bg-terracotta-500 border-terracotta-500' : 'border-cream-400'
         }`}
-        aria-label="Marcar"
+        aria-label={item.checked ? `Desmarcar ${item.name}` : `Marcar ${item.name}`}
+        aria-pressed={!!item.checked}
       >
         {item.checked && (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
             <path
               d="M5 12l5 5L20 7"
               stroke="#FDFBF7"
@@ -368,7 +422,11 @@ function Item({ item, onToggle, onDelete, onEdit }) {
         )}
       </button>
 
-      <button onClick={onDelete} className="shrink-0 text-ink-500 text-lg px-2 mt-0.5" aria-label="Eliminar">
+      <button
+        onClick={onDelete}
+        className="shrink-0 text-ink-500 text-lg px-2 mt-0.5"
+        aria-label={`Eliminar ${item.name}`}
+      >
         ×
       </button>
     </div>
@@ -381,16 +439,16 @@ function Item({ item, onToggle, onDelete, onEdit }) {
 function NewListModal({ onClose, onCreated }) {
   const [name, setName] = useState('')
   const [creating, setCreating] = useState(false)
+  const avisar = useToast()
 
   async function create(value) {
     const n = (value ?? name).trim()
     if (!n) return
     setCreating(true)
     try {
-      const id = await createShoppingList(n)
-      onCreated(id)
+      onCreated(await createShoppingList(n))
     } catch (e) {
-      alert('Error: ' + e.message)
+      avisar('No se ha podido crear: ' + (e?.message || e), 'error')
     } finally {
       setCreating(false)
     }
@@ -434,6 +492,38 @@ function NewListModal({ onClose, onCreated }) {
 function ManageListModal({ list, onClose, onDeleted }) {
   const [name, setName] = useState(list.name)
   const [busy, setBusy] = useState(false)
+  const confirmar = useConfirm()
+  const avisar = useToast()
+
+  async function guardarNombre() {
+    setBusy(true)
+    try {
+      await renameShoppingList(list.id, name.trim() || list.name)
+      onClose()
+    } catch (e) {
+      avisar('No se ha podido guardar: ' + (e?.message || e), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function eliminar() {
+    const ok = await confirmar({
+      title: `Eliminar «${list.name}»`,
+      message: 'Se borrará la lista entera con todos sus productos. Esto no se puede deshacer.',
+      confirmLabel: 'Eliminar',
+      danger: true,
+    })
+    if (!ok) return
+    setBusy(true)
+    try {
+      await deleteShoppingList(list.id)
+      onDeleted()
+    } catch (e) {
+      avisar('No se ha podido eliminar: ' + (e?.message || e), 'error')
+      setBusy(false)
+    }
+  }
 
   return (
     <Sheet title="Ajustes de la lista" onClose={onClose}>
@@ -446,25 +536,11 @@ function ManageListModal({ list, onClose, onDeleted }) {
             className="input"
           />
         </Field>
-        <button
-          onClick={async () => {
-            setBusy(true)
-            await renameShoppingList(list.id, name.trim() || list.name)
-            setBusy(false)
-            onClose()
-          }}
-          disabled={busy}
-          className="btn-primary w-full"
-        >
+        <button onClick={guardarNombre} disabled={busy} className="btn-primary w-full">
           Guardar nombre
         </button>
         <button
-          onClick={async () => {
-            if (!confirm(`¿Eliminar la lista "${list.name}" entera?`)) return
-            setBusy(true)
-            await deleteShoppingList(list.id)
-            onDeleted()
-          }}
+          onClick={eliminar}
           disabled={busy}
           className="w-full py-3 text-terracotta-700 text-sm font-medium border border-terracotta-300 rounded-2xl active:bg-terracotta-50"
         >
@@ -481,56 +557,53 @@ export function ItemModal({ list, item, onClose }) {
   const [quantity, setQuantity] = useState(item?.quantity || '')
   const [category, setCategory] = useState(item?.category || 'otros')
   const [saving, setSaving] = useState(false)
-  const touched = useRef(false)
+  const nombreTocado = useRef(false)
+  const categoriaTocada = useRef(false)
+  const confirmar = useConfirm()
+  const avisar = useToast()
 
+  // Sugiere categoría mientras se escribe el nombre, pero nunca pisa
+  // la que el usuario haya elegido a mano.
   useEffect(() => {
-    if (!touched.current) return
-    if (name.trim()) {
-      const c = categorize(name)
-      if (c !== 'otros') setCategory(c)
-    }
+    if (!nombreTocado.current || categoriaTocada.current) return
+    if (!name.trim()) return
+    const c = categorize(name)
+    if (c !== 'otros') setCategory(c)
   }, [name])
 
   async function save() {
     if (!name.trim()) return
     setSaving(true)
     try {
-      const items = list.items || []
-      const next = isNew
-        ? [
-            ...items,
-            {
-              id: 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-              name: name.trim(),
-              category,
-              checked: false,
-              quantity: quantity.trim() || null,
-              recipes: [],
-            },
-          ]
-        : items.map((it) =>
-            it.id === item.id
-              ? { ...it, name: name.trim(), category, quantity: quantity.trim() || null }
-              : it
-          )
-      await updateShoppingList(list.id, next)
+      const datos = {
+        name: name.trim(),
+        category,
+        quantity: quantity.trim() || null,
+      }
+      if (isNew) await addShoppingItem(list.id, { ...datos, checked: false, recipes: [] })
+      else await updateShoppingItem(list.id, item.id, datos)
       onClose()
     } catch (e) {
-      alert('Error: ' + e.message)
+      avisar('No se ha podido guardar: ' + (e?.message || e), 'error')
     } finally {
       setSaving(false)
     }
   }
 
   async function remove() {
-    if (!confirm(`¿Eliminar "${item.name}"?`)) return
+    const ok = await confirmar({
+      title: `Eliminar «${item.name}»`,
+      message: 'Se quitará de esta lista de la compra.',
+      confirmLabel: 'Eliminar',
+      danger: true,
+    })
+    if (!ok) return
     setSaving(true)
     try {
-      await updateShoppingList(list.id, (list.items || []).filter((it) => it.id !== item.id))
+      await removeShoppingItem(list.id, item.id)
       onClose()
     } catch (e) {
-      alert('Error: ' + e.message)
-    } finally {
+      avisar('No se ha podido eliminar: ' + (e?.message || e), 'error')
       setSaving(false)
     }
   }
@@ -556,7 +629,7 @@ export function ItemModal({ list, item, onClose }) {
             type="text"
             value={name}
             onChange={(e) => {
-              touched.current = true
+              nombreTocado.current = true
               setName(e.target.value)
             }}
             placeholder="Ej: Salmón fresco"
@@ -570,7 +643,7 @@ export function ItemModal({ list, item, onClose }) {
             <button
               onClick={() => setQuantity((q) => bumpQuantity(q, -1))}
               className="shrink-0 w-11 rounded-2xl bg-cream-200 text-ink-700 text-xl font-medium active:bg-cream-300"
-              aria-label="Menos"
+              aria-label="Menos cantidad"
             >
               −
             </button>
@@ -584,7 +657,7 @@ export function ItemModal({ list, item, onClose }) {
             <button
               onClick={() => setQuantity((q) => bumpQuantity(q, 1))}
               className="shrink-0 w-11 rounded-2xl bg-cream-200 text-ink-700 text-xl font-medium active:bg-cream-300"
-              aria-label="Más"
+              aria-label="Más cantidad"
             >
               +
             </button>
@@ -594,7 +667,10 @@ export function ItemModal({ list, item, onClose }) {
         <Field label="Categoría">
           <select
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            onChange={(e) => {
+              categoriaTocada.current = true
+              setCategory(e.target.value)
+            }}
             className="input"
           >
             {CATEGORIES.map((c) => (
@@ -644,45 +720,55 @@ export function ItemModal({ list, item, onClose }) {
 }
 
 /* ---------- IMPORTAR INGREDIENTES DE UNA SEMANA ---------- */
-export function ImportMenuModal({ list, menus, todayWeekId, onClose, presetWeek }) {
+export function ImportMenuModal({
+  list,
+  menus,
+  recipesById,
+  todayWeekId,
+  onClose,
+  presetWeek,
+}) {
   const nextWeek = shiftWeekId(todayWeekId, 1)
-  const available = useMemo(() => (menus || []).map((m) => m.id).sort().reverse(), [menus])
-  const initial =
-    presetWeek || (available.includes(nextWeek) ? nextWeek : available.includes(todayWeekId) ? todayWeekId : available[0])
-  const [wid, setWid] = useState(initial)
+  const available = useMemo(
+    () => (menus || []).map((m) => m.id).sort().reverse(),
+    [menus]
+  )
+  const [wid, setWid] = useState(
+    () =>
+      presetWeek ||
+      (available.includes(nextWeek)
+        ? nextWeek
+        : available.includes(todayWeekId)
+          ? todayWeekId
+          : available[0])
+  )
   const [mode, setMode] = useState('merge') // merge | replace
   const [importing, setImporting] = useState(false)
+  const avisar = useToast()
 
   const menu = (menus || []).find((m) => m.id === wid)
-  const preview = useMemo(() => (menu ? extractItemsFromMenu(menu, wid) : []), [menu, wid])
+
+  // Se usan las recetas que hay hoy en el recetario, no la copia
+  // congelada dentro del menú.
+  const preview = useMemo(
+    () => (menu ? extractItemsFromMenu(withLiveRecipes(menu, recipesById), wid) : []),
+    [menu, wid, recipesById]
+  )
 
   async function run() {
     if (!preview.length) return
     setImporting(true)
     try {
-      let next
-      if (mode === 'replace') {
-        next = preview
-      } else {
-        const existing = [...(list.items || [])]
-        const byKey = new Map(existing.map((it) => [normalize(it.name), it]))
-        for (const p of preview) {
-          const k = normalize(p.name)
-          const found = byKey.get(k)
-          if (!found) {
-            existing.push(p)
-            byKey.set(k, p)
-          } else {
-            found.quantity = combineQuantities(found.quantity, p.quantity)
-            found.recipes = [...(found.recipes || []), ...(p.recipes || [])]
-          }
-        }
-        next = existing
-      }
-      await updateShoppingList(list.id, next)
+      await importWeekIntoList(list.id, preview, mode)
+      avisar(
+        mode === 'replace'
+          ? `Lista reemplazada con ${preview.length} productos`
+          : `${preview.length} productos volcados en ${list.name}`,
+        'ok'
+      )
       onClose()
     } catch (e) {
-      alert('Error: ' + e.message)
+      avisar('No se ha podido importar: ' + (e?.message || e), 'error')
     } finally {
       setImporting(false)
     }
@@ -698,7 +784,7 @@ export function ImportMenuModal({ list, menus, todayWeekId, onClose, presetWeek 
             <Field label="Semana">
               <select value={wid} onChange={(e) => setWid(e.target.value)} className="input">
                 {available.map((id) => {
-                  const { week, year } = parseWeekId(id)
+                  const { week } = parseWeekId(id)
                   return (
                     <option key={id} value={id}>
                       Semana {week} · {weekRangeLabel(id)}
@@ -717,6 +803,12 @@ export function ImportMenuModal({ list, menus, todayWeekId, onClose, presetWeek 
                 Reemplazar la lista
               </Chip>
             </div>
+
+            <p className="text-xs text-ink-500">
+              {mode === 'merge'
+                ? 'Se pueden importar varias semanas seguidas: lo que ya esté puesto no se duplica ni se vuelve a sumar.'
+                : 'Se borrará lo que haya en la lista, incluido lo añadido a mano.'}
+            </p>
 
             <div className="card p-4">
               <p className="label-caps text-teal-700 mb-2">{preview.length} productos</p>

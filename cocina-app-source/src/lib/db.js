@@ -1,9 +1,15 @@
 /* ============================================================
    ACCESO A FIRESTORE
+
    Colecciones:
      /menus/{año-semana}   → planificación semanal
      /recipes/{id}         → catálogo de recetas (comidas y cenas)
      /shopping-lists/{id}  → listas de la compra
+
+   Las listas de la compra guardan sus productos en un array dentro
+   del documento. Para que dos móviles puedan marcar cosas a la vez
+   en el supermercado sin pisarse, todas las modificaciones pasan por
+   una transacción que relee el array antes de escribirlo.
    ============================================================ */
 import { useState, useEffect } from 'react'
 import {
@@ -14,12 +20,18 @@ import {
   deleteDoc,
   onSnapshot,
   query,
+  runTransaction,
   writeBatch,
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import { weekId } from './dates'
+import { mergeShoppingItems } from './ingredients'
 
-/* ---------- MENÚS SEMANALES ---------- */
+const ahora = () => new Date().toISOString()
+
+/* ============================================================
+   MENÚS SEMANALES
+   ============================================================ */
 
 export function useMenu(wid) {
   const [menu, setMenu] = useState(null)
@@ -45,6 +57,11 @@ export function useMenu(wid) {
   return { menu, loading }
 }
 
+/* Todos los menús guardados.
+
+   Se suscribe una sola vez en App y se reparte por props: antes lo
+   llamaban también Estadísticas e Histórico, lo que abría tres
+   suscripciones a la colección entera. */
 export function useAllMenus() {
   const [menus, setMenus] = useState([])
   const [loading, setLoading] = useState(true)
@@ -69,41 +86,27 @@ export function useAllMenus() {
   return { menus, loading }
 }
 
-/* ============================================================
-   OPERACIONES DE ESCRITURA
-   ============================================================ */
-
-export async function saveMealToFirestore(wid, dayIndex, mealType, mealData, currentDays) {
-  const newDays = currentDays.map((d, i) =>
-    i === dayIndex ? { ...d, [mealType]: mealData } : d
-  )
-  await updateDoc(doc(db, 'menus', wid), { days: newDays })
-}
-
-export async function deleteMealInFirestore(wid, dayIndex, mealType, currentDays) {
-  const newDays = currentDays.map((d, i) =>
-    i === dayIndex ? { ...d, [mealType]: null } : d
-  )
-  await updateDoc(doc(db, 'menus', wid), { days: newDays })
-}
-
 export async function importMenuToFirestore(menuData) {
   const wid = weekId(menuData.year, menuData.week)
   await setDoc(doc(db, 'menus', wid), {
     ...menuData,
-    importedAt: new Date().toISOString(),
+    importedAt: ahora(),
   })
   return wid
 }
 
+export async function deleteMenu(wid) {
+  await deleteDoc(doc(db, 'menus', wid))
+}
+
 /* ============================================================
-   APP PRINCIPAL
+   LISTAS DE LA COMPRA
    ============================================================ */
 
-/* ---------- LISTAS DE LA COMPRA ---------- */
 export function useShoppingLists() {
   const [lists, setLists] = useState([])
   const [loading, setLoading] = useState(true)
+
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, 'shopping-lists')),
@@ -113,54 +116,105 @@ export function useShoppingLists() {
         setLists(list)
         setLoading(false)
       },
-      () => setLoading(false)
+      (err) => {
+        console.error('Error cargando listas:', err)
+        setLoading(false)
+      }
     )
     return unsub
   }, [])
+
   return { lists, loading }
 }
 
+export function newItemId() {
+  return 'it_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6)
+}
+
 export async function createShoppingList(name) {
-  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'lista-' + Date.now()
+  const id =
+    name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'lista-' + Date.now()
   await setDoc(doc(db, 'shopping-lists', id), {
     name,
     items: [],
-    createdAt: new Date().toISOString(),
+    createdAt: ahora(),
   })
   return id
 }
 
-export async function updateShoppingList(listId, items) {
-  await updateDoc(doc(db, 'shopping-lists', listId), { items })
+export async function renameShoppingList(listId, name) {
+  await updateDoc(doc(db, 'shopping-lists', listId), { name, updatedAt: ahora() })
 }
 
 export async function deleteShoppingList(listId) {
   await deleteDoc(doc(db, 'shopping-lists', listId))
 }
 
-
-export async function deleteMenu(wid) {
-  await deleteDoc(doc(db, 'menus', wid))
-}
-
-/* Guarda la planificación de una semana completa */
-export async function saveWeekPlan(wid, data) {
-  await setDoc(doc(db, 'menus', wid), {
-    ...data,
-    updatedAt: new Date().toISOString(),
+/* Relee los productos dentro de la transacción y aplica `transformar`.
+   Si dos móviles escriben a la vez, Firestore reintenta en lugar de
+   dejar que uno sobrescriba al otro. */
+async function actualizarItems(listId, transformar) {
+  const ref = doc(db, 'shopping-lists', listId)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists()) throw new Error('Esa lista ya no existe')
+    const items = snap.data().items || []
+    tx.update(ref, { items: transformar(items), updatedAt: ahora() })
   })
-  return wid
 }
 
-export async function renameShoppingList(listId, name) {
-  await updateDoc(doc(db, 'shopping-lists', listId), { name })
+export async function addShoppingItem(listId, item) {
+  await actualizarItems(listId, (items) => [
+    ...items,
+    { id: newItemId(), checked: false, quantity: null, recipes: [], ...item },
+  ])
 }
 
-/* ---------- CATÁLOGO DE RECETAS ---------- */
+export async function updateShoppingItem(listId, itemId, cambios) {
+  await actualizarItems(listId, (items) =>
+    items.map((it) => (it.id === itemId ? { ...it, ...cambios } : it))
+  )
+}
+
+export async function toggleShoppingItem(listId, itemId) {
+  await actualizarItems(listId, (items) =>
+    items.map((it) => (it.id === itemId ? { ...it, checked: !it.checked } : it))
+  )
+}
+
+export async function removeShoppingItem(listId, itemId) {
+  await actualizarItems(listId, (items) => items.filter((it) => it.id !== itemId))
+}
+
+export async function clearCheckedItems(listId) {
+  await actualizarItems(listId, (items) => items.filter((it) => !it.checked))
+}
+
+export async function clearAllItems(listId) {
+  await actualizarItems(listId, () => [])
+}
+
+/* Vuelca los ingredientes de una semana en la lista.
+   `modo`: 'merge' añade sin duplicar, 'replace' sustituye la lista. */
+export async function importWeekIntoList(listId, entrantes, modo = 'merge') {
+  let total = 0
+  await actualizarItems(listId, (items) => {
+    const siguiente = modo === 'replace' ? entrantes : mergeShoppingItems(items, entrantes)
+    total = siguiente.length
+    return siguiente
+  })
+  return total
+}
+
+/* ============================================================
+   CATÁLOGO DE RECETAS
+   ============================================================ */
 
 export function useRecipes() {
   const [recipes, setRecipes] = useState([])
   const [loading, setLoading] = useState(true)
+
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, 'recipes')),
@@ -175,6 +229,7 @@ export function useRecipes() {
     )
     return unsub
   }, [])
+
   return { recipes, loading }
 }
 
@@ -195,8 +250,8 @@ export async function saveRecipe(id, data) {
     doc(db, 'recipes', rid),
     {
       ...data,
-      updatedAt: new Date().toISOString(),
-      ...(id ? {} : { createdAt: new Date().toISOString() }),
+      updatedAt: ahora(),
+      ...(id ? {} : { createdAt: ahora() }),
     },
     { merge: true }
   )
@@ -207,7 +262,7 @@ export async function deleteRecipe(id) {
   await deleteDoc(doc(db, 'recipes', id))
 }
 
-/* Alta masiva de recetas (semilla inicial / sincronización desde menús) */
+/* Alta masiva de recetas (repertorio inicial / sincronización desde menús) */
 export async function bulkSaveRecipes(list) {
   const chunks = []
   for (let i = 0; i < list.length; i += 400) chunks.push(list.slice(i, i + 400))

@@ -1,7 +1,17 @@
-// Firebase inicialización
-// Config de Juan - proyecto: cocina-juanlc
+/* ============================================================
+   INICIALIZACIÓN DE FIREBASE
+   Proyecto: cocina-juanlc
+
+   La configuración web de Firebase es pública por diseño (va en el
+   bundle): quien protege los datos son las reglas de Firestore,
+   no esta clave. Ver FIRESTORE_RULES.txt.
+   ============================================================ */
 import { initializeApp } from 'firebase/app'
-import { getFirestore } from 'firebase/firestore'
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore'
 import { getAuth } from 'firebase/auth'
 
 const firebaseConfig = {
@@ -14,5 +24,24 @@ const firebaseConfig = {
 }
 
 const app = initializeApp(firebaseConfig)
-export const db = getFirestore(app)
+
+/* Caché persistente en IndexedDB.
+
+   Es lo que permite abrir la lista de la compra dentro de un
+   supermercado sin cobertura: los datos ya están en el móvil y lo
+   que se marque allí se sincroniza al recuperar la señal.
+   El gestor multipestaña evita que dos pestañas se peleen por la
+   caché; si el navegador no la soporta, se cae con elegancia a la
+   caché en memoria y la app sigue funcionando online. */
+let firestore
+try {
+  firestore = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  })
+} catch (e) {
+  console.warn('Sin caché persistente, se sigue solo online:', e?.message || e)
+  firestore = initializeFirestore(app, {})
+}
+
+export const db = firestore
 export const auth = getAuth(app)

@@ -256,5 +256,3 @@ function build(rows, type) {
 }
 
 export const SEED_RECIPES = [...build(COMIDAS, 'comida'), ...build(CENAS, 'cena')]
-
-export const SEED_COUNT = SEED_RECIPES.length
