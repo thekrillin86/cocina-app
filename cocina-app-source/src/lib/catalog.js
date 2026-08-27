@@ -4,7 +4,8 @@
    de uso (veces cocinado / última vez) y ordenaciones.
    ============================================================ */
 import { normalize } from './ingredients'
-import { dateForDay } from './dates'
+import { dateForDay, daysUntil } from './dates'
+import { forEachDish } from './dishes'
 
 /* ---------- TIPO DE COMIDA ---------- */
 export const MEAL_TYPES = [
@@ -18,7 +19,7 @@ export const DISH_CATEGORIES = [
     key: 'ensalada',
     label: 'Ensaladas',
     icon: '🥗',
-    keywords: ['ensalada', 'ensaladilla', 'bowl', 'bol ', 'caprese', 'carpaccio', 'templada'],
+    keywords: ['ensalada', 'ensaladilla', 'bowl', 'caprese', 'carpaccio', 'templada'],
   },
   {
     key: 'pescado',
@@ -109,35 +110,35 @@ export function computeUsageStats(menus) {
 
   for (const menu of menus || []) {
     const wid = menu.id
-    ;(menu.days || []).forEach((d, dayIndex) => {
-      for (const type of ['lunch', 'dinner']) {
-        const meal = d[type]
-        if (!meal || !meal.name) continue
-        const key = normalize(meal.name)
-        let when = null
-        try {
-          when = dateForDay(wid, dayIndex)
-        } catch (e) {
-          when = null
-        }
-        // No contar días futuros como "ya cocinado"
-        if (when && when.getTime() > today.getTime() + 86400000) continue
-
-        const prev = stats.get(key) || { count: 0, last: null, lastType: null }
-        prev.count += 1
-        if (when && (!prev.last || when > prev.last)) {
-          prev.last = when
-          prev.lastType = type
-        }
-        stats.set(key, prev)
+    // Cada plato cuenta por separado: si un día hubo carne torrada y
+    // ensalada, las dos se han cocinado ese día.
+    forEachDish(menu, (meal, { dayIndex, mealType }) => {
+      const key = normalize(meal.name)
+      let when = null
+      try {
+        when = dateForDay(wid, dayIndex)
+      } catch (e) {
+        when = null
       }
+      // No contar días futuros como "ya cocinado"
+      if (when && when.getTime() > today.getTime() + 86400000) return
+
+      const prev = stats.get(key) || { count: 0, last: null, lastType: null }
+      prev.count += 1
+      if (when && (!prev.last || when > prev.last)) {
+        prev.last = when
+        prev.lastType = mealType
+      }
+      stats.set(key, prev)
     })
   }
 
   for (const [, v] of stats) {
-    v.daysAgo = v.last
-      ? Math.round((Date.now() - v.last.getTime()) / 86400000)
-      : null
+    // Días naturales, no milisegundos: restando las fechas en crudo,
+    // un plato cocinado hoy pasaba a "Ayer" en cuanto se cumplían
+    // doce horas desde la medianoche UTC de ese día.
+    const dias = v.last ? -daysUntil(v.last) : null
+    v.daysAgo = dias == null ? null : Math.max(0, dias)
   }
   return stats
 }
@@ -285,14 +286,33 @@ export function withLiveRecipe(meal, recipesById) {
   }
 }
 
+/* Un hueco entero, conservando su forma (objeto suelto o lista) */
+function withLiveSlot(slot, recipesById) {
+  if (!slot) return slot
+  if (!Array.isArray(slot)) return withLiveRecipe(slot, recipesById)
+  return slot.map((d) => withLiveRecipe(d, recipesById))
+}
+
 export function withLiveRecipes(menu, recipesById) {
   if (!menu?.days || !recipesById?.size) return menu
   return {
     ...menu,
     days: menu.days.map((d) => ({
       ...d,
-      lunch: withLiveRecipe(d.lunch, recipesById),
-      dinner: withLiveRecipe(d.dinner, recipesById),
+      lunch: withLiveSlot(d.lunch, recipesById),
+      dinner: withLiveSlot(d.dinner, recipesById),
     })),
   }
+}
+
+/* Busca en el recetario la receta de un plato del menú: primero por
+   identificador y, si el plato se escribió a mano, por nombre. */
+export function findRecipeForMeal(meal, recipes) {
+  if (!meal || !recipes?.length) return null
+  if (meal.recipeId) {
+    const porId = recipes.find((r) => r.id === meal.recipeId)
+    if (porId) return porId
+  }
+  const clave = normalize(meal.name)
+  return recipes.find((r) => normalize(r.name) === clave) || null
 }

@@ -3,6 +3,7 @@
    ============================================================ */
 
 import { DAYS_ES, dateForDay, formatDayMonth } from './dates'
+import { asDishes } from './dishes'
 
 /* ============================================================
    NORMALIZACIÓN Y ALIASES PARA DEDUPLICACIÓN INTELIGENTE
@@ -507,51 +508,54 @@ export function extractItemsFromMenu(menu, wid) {
     }
 
     for (const type of ['lunch', 'dinner']) {
-      const meal = d[type]
-      if (!meal || !meal.recipe) continue
-      const ings = meal.recipe.ingredients
-      if (!ings) continue
-      const arr = Array.isArray(ings) ? ings : String(ings).split('\n')
+      // Un hueco puede llevar varios platos ("carne torrada +
+      // ensalada de tomate") y cada uno aporta sus ingredientes.
+      for (const meal of asDishes(d[type])) {
+        if (!meal.recipe) continue
+        const ings = meal.recipe.ingredients
+        if (!ings) continue
+        const arr = Array.isArray(ings) ? ings : String(ings).split('\n')
 
-      const refBase = {
-        recipeName: meal.name || null,
-        day: d.day || DAYS_ES[dayIndex] || null,
-        dayIndex,
-        weekId: weekKey,
-        isoDate,
-        dateLabel: isoDate ? formatDayMonth(new Date(isoDate + 'T00:00:00Z')) : d.date || null,
-        mealType: type,
-      }
+        const refBase = {
+          recipeName: meal.name || null,
+          day: d.day || DAYS_ES[dayIndex] || null,
+          dayIndex,
+          weekId: weekKey,
+          isoDate,
+          dateLabel: isoDate ? formatDayMonth(new Date(isoDate + 'T00:00:00Z')) : d.date || null,
+          mealType: type,
+        }
 
-      for (const linea of arr) {
-        for (const trozo of splitIngredientLine(linea)) {
-          const parsed = parseIngredient(trozo)
-          if (!parsed) continue
-          const canonical = toCanonical(parsed.name)
-          const key = normalize(canonical)
-          if (key.length < 2) continue
-          if (isBlacklisted(canonical)) continue
+        for (const linea of arr) {
+          for (const trozo of splitIngredientLine(linea)) {
+            const parsed = parseIngredient(trozo)
+            if (!parsed) continue
+            const canonical = toCanonical(parsed.name)
+            const key = normalize(canonical)
+            if (key.length < 2) continue
+            if (isBlacklisted(canonical)) continue
 
-          const existing = seen.get(key)
-          if (!existing) {
-            seen.set(key, {
-              id: 'auto_' + key.replace(/\s+/g, '_'),
-              name: canonical,
-              quantity: parsed.quantity,
-              category: categorize(canonical),
-              checked: false,
-              recipes: refBase.recipeName ? [{ ...refBase, qty: parsed.quantity }] : [],
-            })
-            continue
+            const existing = seen.get(key)
+            if (!existing) {
+              seen.set(key, {
+                id: 'auto_' + key.replace(/\s+/g, '_'),
+                name: canonical,
+                quantity: parsed.quantity,
+                category: categorize(canonical),
+                checked: false,
+                recipes: refBase.recipeName ? [{ ...refBase, qty: parsed.quantity }] : [],
+              })
+              continue
+            }
+
+            existing.quantity = combineQuantities(existing.quantity, parsed.quantity)
+            if (!refBase.recipeName) continue
+            // El mismo ingrediente puede repetirse dentro de una receta:
+            // no se duplica la referencia, se acumula en la que ya hay.
+            const yaEsta = existing.recipes.find((r) => refKeyLoose(r) === refKeyLoose(refBase))
+            if (yaEsta) yaEsta.qty = combineQuantities(yaEsta.qty, parsed.quantity)
+            else existing.recipes.push({ ...refBase, qty: parsed.quantity })
           }
-
-          existing.quantity = combineQuantities(existing.quantity, parsed.quantity)
-          if (!refBase.recipeName) continue
-          // El mismo ingrediente puede repetirse dentro de una receta:
-          // no se duplica la referencia, se acumula en la que ya hay.
-          const yaEsta = existing.recipes.find((r) => refKeyLoose(r) === refKeyLoose(refBase))
-          if (yaEsta) yaEsta.qty = combineQuantities(yaEsta.qty, parsed.quantity)
-          else existing.recipes.push({ ...refBase, qty: parsed.quantity })
         }
       }
     }

@@ -2,6 +2,7 @@ import React from 'react'
 import { Header, Loading, EmptyState, useConfirm, useToast } from '../components/ui'
 import { deleteMenu } from '../lib/db'
 import { weekRangeLabel } from '../lib/dates'
+import { asDishes } from '../lib/dishes'
 
 export function HistoryView({ menus, loading, todayWeekId, onOpen }) {
   const confirmar = useConfirm()
@@ -38,7 +39,7 @@ export function HistoryView({ menus, loading, todayWeekId, onOpen }) {
             {menus.map((m) => {
               const totalMeals =
                 m.days?.reduce(
-                  (acc, d) => acc + (d.lunch ? 1 : 0) + (d.dinner ? 1 : 0),
+                  (acc, d) => acc + asDishes(d.lunch).length + asDishes(d.dinner).length,
                   0
                 ) || 0
               return (

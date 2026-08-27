@@ -5,25 +5,34 @@ import {
   DISH_CATEGORIES,
   CATEGORY_META,
   SORT_MODES,
+  RATINGS,
   sortRecipes,
   statsFor,
   lastCookedLabel,
   freshnessTone,
   ratingMeta,
   recipeToMeal,
+  mealToRecipe,
+  findRecipeForMeal,
   guessCategory,
 } from '../lib/catalog'
+import { asDishes, slotCalories } from '../lib/dishes'
+import { saveRecipe } from '../lib/db'
 import { normalize } from '../lib/ingredients'
 
 export const MEAL_NOTES = ['Tupper niños', 'Del día anterior', 'Hacer el doble']
 
 /* ============================================================
-   TARJETA DE PLATO (vista Hoy)
-   ============================================================ */
-export function MealCard({ meal, label, onEdit }) {
-  const [showRecipe, setShowRecipe] = useState(false)
+   TARJETA DE UN HUECO (vista Hoy)
 
-  if (!meal) {
+   Un hueco puede llevar varios platos. Se enseñan todos, y las
+   calorías que se muestran son la suma de los que las tengan.
+   ============================================================ */
+export function MealCard({ slot, label, onEdit }) {
+  const [showRecipe, setShowRecipe] = useState(false)
+  const platos = asDishes(slot)
+
+  if (!platos.length) {
     return (
       <div className="card p-5 border-2 border-dashed border-cream-300 bg-transparent shadow-none">
         <p className="label-caps text-teal-700 mb-2">{label}</p>
@@ -36,6 +45,9 @@ export function MealCard({ meal, label, onEdit }) {
       </div>
     )
   }
+
+  const kcal = slotCalories(slot)
+  const conReceta = platos.filter((p) => p.recipe)
 
   return (
     <div className="card overflow-hidden">
@@ -51,36 +63,57 @@ export function MealCard({ meal, label, onEdit }) {
             </button>
           )}
         </div>
-        <h2 className="font-display text-2xl text-ink-900 leading-tight mb-2">{meal.name}</h2>
-        <div className="space-y-1 text-sm">
-          {meal.proteins && (
-            <p className="text-ink-700">
-              <span className="text-ink-500">Proteína: </span>
-              {formatProteins(meal.proteins)}
-            </p>
-          )}
-          {meal.calories && (
-            <p className="text-ink-700">
-              <span className="text-ink-500">Calorías: </span>
-              {meal.calories} kcal / persona
-            </p>
-          )}
-          {meal.notes && <p className="text-terracotta-600 italic">{meal.notes}</p>}
+
+        <div className="space-y-3">
+          {platos.map((meal, i) => (
+            <div key={i}>
+              <h2 className="font-display text-2xl text-ink-900 leading-tight">{meal.name}</h2>
+              <div className="space-y-0.5 text-sm mt-1">
+                {meal.proteins && (
+                  <p className="text-ink-700">
+                    <span className="text-ink-500">Proteína: </span>
+                    {formatProteins(meal.proteins)}
+                  </p>
+                )}
+                {meal.notes && <p className="text-terracotta-600 italic">{meal.notes}</p>}
+              </div>
+            </div>
+          ))}
         </div>
 
-        {meal.recipe && (
+        {kcal != null && (
+          <p className="text-sm text-ink-700 mt-3">
+            <span className="text-ink-500">
+              {platos.length > 1 ? 'Calorías en total: ' : 'Calorías: '}
+            </span>
+            {kcal} kcal / persona
+          </p>
+        )}
+
+        {conReceta.length > 0 && (
           <button
             onClick={() => setShowRecipe(!showRecipe)}
             className="mt-4 text-terracotta-600 text-sm font-medium"
           >
-            {showRecipe ? 'Ocultar receta ▲' : 'Ver receta ▼'}
+            {showRecipe
+              ? 'Ocultar receta ▲'
+              : conReceta.length > 1
+                ? 'Ver recetas ▼'
+                : 'Ver receta ▼'}
           </button>
         )}
       </div>
 
-      {showRecipe && meal.recipe && (
-        <div className="px-5 pb-5 pt-1 space-y-3 text-sm border-t border-cream-200">
-          <RecipeBody recipe={meal.recipe} />
+      {showRecipe && conReceta.length > 0 && (
+        <div className="px-5 pb-5 pt-1 space-y-4 text-sm border-t border-cream-200">
+          {conReceta.map((meal, i) => (
+            <div key={i} className="space-y-3">
+              {conReceta.length > 1 && (
+                <p className="font-display text-lg text-ink-900 pt-2">{meal.name}</p>
+              )}
+              <RecipeBody recipe={meal.recipe} />
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -120,7 +153,16 @@ export function RecipeBody({ recipe }) {
 /* ============================================================
    SELECTOR DE PLATO DESDE EL RECETARIO
    ============================================================ */
-export function MealPicker({ recipes, stats, mealType, dayLabel, onPick, onManual, onClose }) {
+export function MealPicker({
+  recipes,
+  stats,
+  mealType,
+  dayLabel,
+  anadiendo,
+  onPick,
+  onManual,
+  onClose,
+}) {
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('todas')
   const [sort, setSort] = useState('sugerido')
@@ -151,7 +193,11 @@ export function MealPicker({ recipes, stats, mealType, dayLabel, onPick, onManua
 
   return (
     <Sheet
-      title={`${mealType === 'lunch' ? 'Comida' : 'Cena'}${dayLabel ? ' · ' + dayLabel : ''}`}
+      title={
+        anadiendo
+          ? 'Añadir otro plato'
+          : `${mealType === 'lunch' ? 'Comida' : 'Cena'}${dayLabel ? ' · ' + dayLabel : ''}`
+      }
       onClose={onClose}
       onCloseLabel="Cancelar"
       action={
@@ -260,59 +306,203 @@ export function RecipeRow({ recipe, stats, onClick, right }) {
 }
 
 /* ============================================================
-   FICHA DEL PLATO YA ASIGNADO (con acciones)
+   VALORACIÓN DE UN PLATO DESDE EL MENÚ
+
+   La valoración vive en la receta del recetario, no en el plato del
+   menú. Los platos elegidos del recetario llevan `recipeId`; los
+   escritos a mano no, así que se busca por nombre y, si tampoco
+   está, se ofrece guardarlo antes de poder valorarlo.
    ============================================================ */
-export function MealDetail({ meal, mealType, dayLabel, onClose, onChange, onSetNote, onManual, onRemove }) {
-  return (
-    <Sheet title={meal.name} onClose={onClose}>
-      <div className="p-5 space-y-4">
-        <p className="text-sm text-ink-500">
-          {dayLabel} · {mealType === 'lunch' ? 'Comida' : 'Cena'}
+function DishRating({ meal, mealType, recipes }) {
+  const avisar = useToast()
+  const [guardando, setGuardando] = useState(false)
+  const receta = useMemo(() => findRecipeForMeal(meal, recipes), [meal, recipes])
+
+  async function valorar(valor) {
+    setGuardando(true)
+    try {
+      await saveRecipe(receta.id, { name: receta.name, rating: valor })
+    } catch (e) {
+      avisar('No se ha podido valorar: ' + (e?.message || e), 'error')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  async function guardarEnRecetario() {
+    setGuardando(true)
+    try {
+      await saveRecipe(null, mealToRecipe(meal, mealType))
+      avisar('Guardado en el recetario, ya puedes valorarlo', 'ok')
+    } catch (e) {
+      avisar('No se ha podido guardar: ' + (e?.message || e), 'error')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  if (!receta) {
+    return (
+      <div>
+        <p className="label-caps text-teal-700 mb-1.5">Valoración</p>
+        <p className="text-xs text-ink-500 mb-2">
+          Este plato no está en el recetario, que es donde se guarda la valoración.
         </p>
+        <button
+          onClick={guardarEnRecetario}
+          disabled={guardando}
+          className="text-sm px-4 py-2 rounded-full bg-teal-50 text-teal-700 font-medium active:bg-teal-100 disabled:opacity-50"
+        >
+          {guardando ? 'Guardando…' : '+ Guardar en el recetario'}
+        </button>
+      </div>
+    )
+  }
 
-        <div className="flex flex-wrap gap-2">
-          {meal.proteins && <Tag tone="soft">🥩 {formatProteins(meal.proteins)}</Tag>}
-          {meal.calories && <Tag tone="soft">🔥 {meal.calories} kcal</Tag>}
-          {meal.notes && <Tag tone="warn">{meal.notes}</Tag>}
-        </div>
+  const valor = receta.rating ?? 0
 
-        <div>
-          <p className="label-caps text-teal-700 mb-2">Nota del día</p>
-          <div className="flex flex-wrap gap-2">
-            <Chip active={!meal.notes} onClick={() => onSetNote(null)}>
-              Sin nota
-            </Chip>
-            {MEAL_NOTES.map((n) => (
-              <Chip key={n} active={meal.notes === n} onClick={() => onSetNote(n)}>
-                {n}
-              </Chip>
-            ))}
-          </div>
-        </div>
+  return (
+    <div>
+      <p className="label-caps text-teal-700 mb-1.5">Valoración</p>
+      <div className={`flex flex-wrap gap-2 ${guardando ? 'opacity-50' : ''}`}>
+        {RATINGS.map((r) => (
+          <Chip key={r.value} active={valor === r.value} onClick={() => valorar(r.value)}>
+            {r.icon} {r.label}
+          </Chip>
+        ))}
+      </div>
+    </div>
+  )
+}
 
-        <div className="border-t border-cream-200 pt-4 text-sm space-y-3">
-          <RecipeBody recipe={meal.recipe} />
-        </div>
+/* ============================================================
+   FICHA DE UN HUECO YA OCUPADO
 
-        <div className="space-y-2 pt-2">
-          <button onClick={onChange} className="btn-primary w-full">
-            Cambiar plato
-          </button>
-          <button
-            onClick={onManual}
-            className="w-full py-3 rounded-2xl border border-cream-300 text-ink-700 font-medium active:bg-cream-200"
-          >
-            Editar receta de este día
-          </button>
-          <button
-            onClick={onRemove}
-            className="w-full py-3 text-terracotta-700 text-sm font-medium border border-terracotta-300 rounded-2xl active:bg-terracotta-50"
-          >
-            Quitar plato
-          </button>
-        </div>
+   Lista los platos que tiene, con sus acciones por plato, y deja
+   añadir otro: "carne torrada + ensalada de tomate".
+   ============================================================ */
+export function SlotDetail({
+  slot,
+  mealType,
+  dayLabel,
+  recipes,
+  stats,
+  onClose,
+  onChangeDish,
+  onAddDish,
+  onEditDish,
+  onSetNote,
+  onRemoveDish,
+}) {
+  const platos = asDishes(slot)
+  const kcal = slotCalories(slot)
+  const titulo = mealType === 'lunch' ? 'Comida' : 'Cena'
+
+  return (
+    <Sheet title={`${titulo}${dayLabel ? ' · ' + dayLabel : ''}`} onClose={onClose} tall>
+      <div className="p-5 space-y-4">
+        {platos.length > 1 && kcal != null && (
+          <p className="text-sm text-ink-500">
+            {platos.length} platos · {kcal} kcal en total por persona
+          </p>
+        )}
+
+        {platos.map((meal, index) => (
+          <DishCard
+            key={index}
+            meal={meal}
+            index={index}
+            mealType={mealType}
+            recipes={recipes}
+            stats={stats}
+            unico={platos.length === 1}
+            onChange={() => onChangeDish(index)}
+            onEdit={() => onEditDish(index)}
+            onSetNote={(note) => onSetNote(index, note)}
+            onRemove={() => onRemoveDish(index)}
+          />
+        ))}
+
+        <button
+          onClick={onAddDish}
+          className="w-full py-3 rounded-2xl bg-teal-50 text-teal-700 font-medium active:bg-teal-100"
+        >
+          + Añadir otro plato a esta {titulo.toLowerCase()}
+        </button>
       </div>
     </Sheet>
+  )
+}
+
+function DishCard({ meal, mealType, recipes, stats, unico, onChange, onEdit, onSetNote, onRemove }) {
+  const [verReceta, setVerReceta] = useState(false)
+  const s = statsFor(stats, meal.name)
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div>
+        <h3 className="font-display text-xl text-ink-900 leading-tight">{meal.name}</h3>
+        <div className="flex flex-wrap gap-2 mt-2">
+          {meal.proteins && <Tag tone="soft">🥩 {formatProteins(meal.proteins)}</Tag>}
+          {meal.calories && <Tag tone="soft">🔥 {meal.calories} kcal</Tag>}
+          <Tag>🕘 {lastCookedLabel(s.daysAgo)}</Tag>
+          {meal.notes && <Tag tone="warn">{meal.notes}</Tag>}
+        </div>
+      </div>
+
+      <DishRating meal={meal} mealType={mealType} recipes={recipes} />
+
+      <div>
+        <p className="label-caps text-teal-700 mb-1.5">Nota del día</p>
+        <div className="flex flex-wrap gap-2">
+          <Chip active={!meal.notes} onClick={() => onSetNote(null)}>
+            Sin nota
+          </Chip>
+          {MEAL_NOTES.map((n) => (
+            <Chip key={n} active={meal.notes === n} onClick={() => onSetNote(n)}>
+              {n}
+            </Chip>
+          ))}
+        </div>
+      </div>
+
+      {meal.recipe && (
+        <div>
+          <button
+            onClick={() => setVerReceta((v) => !v)}
+            className="text-terracotta-600 text-sm font-medium"
+          >
+            {verReceta ? 'Ocultar receta ▲' : 'Ver receta ▼'}
+          </button>
+          {verReceta && (
+            <div className="mt-3 pt-3 border-t border-cream-200 text-sm space-y-3">
+              <RecipeBody recipe={meal.recipe} />
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button
+          onClick={onChange}
+          className="flex-1 min-w-[7rem] py-2.5 rounded-full bg-terracotta-500 text-cream-50 text-sm font-medium active:bg-terracotta-600"
+        >
+          Cambiar
+        </button>
+        <button
+          onClick={onEdit}
+          className="flex-1 min-w-[7rem] py-2.5 rounded-full border border-cream-300 text-ink-700 text-sm font-medium active:bg-cream-200"
+        >
+          Editar receta
+        </button>
+        <button
+          onClick={onRemove}
+          className="flex-1 min-w-[7rem] py-2.5 rounded-full border border-terracotta-300 text-terracotta-700 text-sm font-medium active:bg-terracotta-50"
+        >
+          {unico ? 'Quitar plato' : 'Quitar'}
+        </button>
+      </div>
+    </div>
   )
 }
 

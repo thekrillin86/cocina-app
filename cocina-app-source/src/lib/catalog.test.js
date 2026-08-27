@@ -1,0 +1,188 @@
+import { describe, it, expect } from 'vitest'
+import {
+  computeUsageStats,
+  statsFor,
+  lastCookedLabel,
+  guessCategory,
+  findRecipeForMeal,
+  withLiveRecipes,
+  indexRecipesById,
+  sortRecipes,
+} from './catalog'
+import { currentWeekId, getTodayWeekIndex, weekId, getISOWeek } from './dates'
+
+/* Un menú de la semana en curso, con el plato puesto en el día de hoy */
+function menuDeHoy(slot) {
+  const dias = Array.from({ length: 7 }, () => ({ lunch: null, dinner: null }))
+  dias[getTodayWeekIndex()] = { lunch: slot, dinner: null }
+  return { id: currentWeekId(), days: dias }
+}
+
+describe('computeUsageStats', () => {
+  it('cuenta por separado los dos platos de un mismo hueco', () => {
+    const stats = computeUsageStats([
+      menuDeHoy([{ name: 'Carne torrada' }, { name: 'Ensalada de tomate' }]),
+    ])
+    expect(statsFor(stats, 'Carne torrada').count).toBe(1)
+    expect(statsFor(stats, 'Ensalada de tomate').count).toBe(1)
+  })
+
+  it('un plato de hoy es "Hoy", no "Ayer"', () => {
+    // Restando fechas en crudo, a partir del mediodía UTC daba 1 día
+    const stats = computeUsageStats([menuDeHoy({ name: 'Tortilla' })])
+    const s = statsFor(stats, 'Tortilla')
+    expect(s.daysAgo).toBe(0)
+    expect(lastCookedLabel(s.daysAgo)).toBe('Hoy')
+  })
+
+  it('sigue contando los huecos guardados como objeto suelto', () => {
+    const stats = computeUsageStats([menuDeHoy({ name: 'Tortilla' })])
+    expect(statsFor(stats, 'Tortilla').count).toBe(1)
+  })
+
+  it('no cuenta como cocinado lo que está en el futuro', () => {
+    const { year, week } = getISOWeek()
+    const futura = {
+      id: weekId(year, week + 4),
+      days: [{ lunch: { name: 'Plato futuro' }, dinner: null }],
+    }
+    expect(statsFor(computeUsageStats([futura]), 'Plato futuro').count).toBe(0)
+  })
+
+  it('ignora acentos y mayúsculas al agrupar', () => {
+    const stats = computeUsageStats([menuDeHoy([{ name: 'Salmón' }, { name: 'salmon' }])])
+    expect(statsFor(stats, 'SALMON').count).toBe(2)
+  })
+
+  it('aguanta una lista de menús vacía', () => {
+    expect(computeUsageStats([]).size).toBe(0)
+    expect(computeUsageStats(null).size).toBe(0)
+  })
+})
+
+describe('lastCookedLabel', () => {
+  it('traduce los días a texto', () => {
+    expect(lastCookedLabel(null)).toBe('Nunca')
+    expect(lastCookedLabel(0)).toBe('Hoy')
+    expect(lastCookedLabel(1)).toBe('Ayer')
+    expect(lastCookedLabel(5)).toBe('Hace 5 días')
+    expect(lastCookedLabel(21)).toBe('Hace 3 sem')
+  })
+})
+
+describe('findRecipeForMeal', () => {
+  const recetario = [
+    { id: 'r-1', name: 'Carne torrada', rating: 2 },
+    { id: 'r-2', name: 'Ensalada de tomate', rating: 0 },
+  ]
+
+  it('encuentra por identificador', () => {
+    expect(findRecipeForMeal({ name: 'lo que sea', recipeId: 'r-1' }, recetario).id).toBe('r-1')
+  })
+
+  it('cae al nombre cuando el plato se escribió a mano', () => {
+    expect(findRecipeForMeal({ name: 'carne torrada' }, recetario).id).toBe('r-1')
+    expect(findRecipeForMeal({ name: 'CARNE TORRADA' }, recetario).id).toBe('r-1')
+  })
+
+  it('cae al nombre si el identificador ya no existe', () => {
+    expect(findRecipeForMeal({ name: 'Carne torrada', recipeId: 'borrada' }, recetario).id).toBe(
+      'r-1'
+    )
+  })
+
+  it('devuelve null si no está en el recetario', () => {
+    expect(findRecipeForMeal({ name: 'Plato inventado' }, recetario)).toBeNull()
+    expect(findRecipeForMeal(null, recetario)).toBeNull()
+  })
+})
+
+describe('withLiveRecipes', () => {
+  const recetario = indexRecipesById([
+    { id: 'r-1', name: 'Carne torrada', recipe: { steps: 'nueva versión' }, calories: 500 },
+  ])
+
+  it('usa la receta del recetario en un hueco de un solo plato', () => {
+    const menu = {
+      days: [
+        {
+          lunch: { name: 'Carne torrada', recipeId: 'r-1', recipe: { steps: 'vieja' } },
+          dinner: null,
+        },
+      ],
+    }
+    const vivo = withLiveRecipes(menu, recetario)
+    expect(vivo.days[0].lunch.recipe.steps).toBe('nueva versión')
+    expect(vivo.days[0].lunch.calories).toBe(500)
+  })
+
+  it('conserva la forma del hueco: objeto sigue siendo objeto', () => {
+    const menu = { days: [{ lunch: { name: 'Carne torrada', recipeId: 'r-1' }, dinner: null }] }
+    expect(Array.isArray(withLiveRecipes(menu, recetario).days[0].lunch)).toBe(false)
+  })
+
+  it('conserva la forma del hueco: lista sigue siendo lista', () => {
+    const menu = {
+      days: [
+        {
+          lunch: [
+            { name: 'Carne torrada', recipeId: 'r-1', recipe: { steps: 'vieja' } },
+            { name: 'Ensalada', recipe: { steps: 'suya' } },
+          ],
+          dinner: null,
+        },
+      ],
+    }
+    const vivo = withLiveRecipes(menu, recetario)
+    expect(Array.isArray(vivo.days[0].lunch)).toBe(true)
+    expect(vivo.days[0].lunch[0].recipe.steps).toBe('nueva versión')
+    // El plato que no está en el recetario conserva su copia
+    expect(vivo.days[0].lunch[1].recipe.steps).toBe('suya')
+  })
+
+  it('deja el menú igual si no hay recetario', () => {
+    const menu = { days: [{ lunch: { name: 'X' }, dinner: null }] }
+    expect(withLiveRecipes(menu, new Map())).toBe(menu)
+  })
+})
+
+describe('guessCategory', () => {
+  it('adivina por palabras clave del nombre', () => {
+    expect(guessCategory('Ensalada de lentejas')).toBe('ensalada')
+    expect(guessCategory('Merluza al horno')).toBe('pescado')
+    expect(guessCategory('Espaguetis carbonara')).toBe('pasta')
+    expect(guessCategory('Chuchería rara')).toBe('otro')
+  })
+
+  it('no confunde "boloñesa" con un bol de ensalada', () => {
+    // La clave 'bol ' perdía el espacio al normalizar y casaba dentro
+    // de "boloñesa", así que la lasaña acababa en Ensaladas
+    expect(guessCategory('Lasaña boloñesa con champiñones')).not.toBe('ensalada')
+    expect(guessCategory('Espaguetis a la boloñesa')).not.toBe('ensalada')
+  })
+})
+
+describe('sortRecipes', () => {
+  const stats = new Map()
+  const lista = [
+    { id: 'a', name: 'Bacalao', rating: 0 },
+    { id: 'b', name: 'Arroz', rating: 2 },
+  ]
+
+  it('ordena alfabéticamente', () => {
+    expect(sortRecipes(lista, 'alfabetico', stats).map((r) => r.name)).toEqual([
+      'Arroz',
+      'Bacalao',
+    ])
+  })
+
+  it('sube los favoritos al ordenar por valoración', () => {
+    expect(sortRecipes(lista, 'ranking', stats)[0].name).toBe('Arroz')
+  })
+
+  it('no toca la lista original', () => {
+    const copia = [...lista]
+    sortRecipes(lista, 'alfabetico', stats)
+    expect(lista).toEqual(copia)
+  })
+})

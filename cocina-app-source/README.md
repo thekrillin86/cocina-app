@@ -13,6 +13,7 @@ src/
   lib/
     dates.js           Semana ISO, fechas reales de cada día
     useToday.js        Fecha de hoy revalidada (la PWA vive días abierta)
+    dishes.js          Un hueco puede llevar varios platos
     format.js          Formato de valores
     ingredients.js     Limpieza, alias, cantidades y categorías de la compra
     catalog.js         Categorías de plato, valoración, estadísticas, receta viva
@@ -55,6 +56,20 @@ huella para que reimportar la misma semana no duplique nada.
 **Receta viva.** Los platos del menú guardan una copia de la receta,
 pero si esa receta sigue en el recetario se muestra la del recetario,
 que es la que se edita. La copia queda como respaldo histórico.
+
+**Varios platos por comida.** Un hueco (la comida o la cena de un día)
+puede llevar más de un plato: "carne torrada + ensalada de tomate".
+Cada plato es completo, con su receta, sus calorías, su valoración y
+su nota, porque si no la lista de la compra no recogería los
+ingredientes del segundo. En Firestore el hueco se guarda como objeto
+suelto cuando solo hay un plato y como lista cuando hay varios, así
+que los menús anteriores no cambian de forma. Todo pasa por
+`asDishes` / `fromDishes` en `lib/dishes.js`.
+
+**Valorar desde el menú.** La valoración vive en la receta del
+recetario, no en el plato del menú. Al valorar desde «Hoy» o «Semana»
+se busca la receta por identificador y, si el plato se escribió a
+mano, por nombre; si no está, se ofrece guardarla antes.
 
 ## Colecciones Firestore
 

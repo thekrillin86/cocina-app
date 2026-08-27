@@ -11,6 +11,7 @@ import {
   CartesianGrid,
 } from 'recharts'
 import { Header, Loading, EmptyState } from '../components/ui'
+import { asDishes } from '../lib/dishes'
 
 /* Esta vista es la unica que usa recharts (~400 KB). App la carga con
    React.lazy para que no lastre el arranque en el movil. */
@@ -30,19 +31,20 @@ export function StatsView({ menus, loading }) {
       let weekCal = 0
       let weekDays = 0
       for (const d of m.days || []) {
+        // Un hueco puede llevar varios platos y cada uno cuenta
         for (const type of ['lunch', 'dinner']) {
-          const meal = d[type]
-          if (!meal) continue
-          totalMeals++
-          const name = meal.name.trim()
-          dishCount[name] = (dishCount[name] || 0) + 1
-          if (meal.calories) {
-            totalCal += meal.calories
-            mealsWithCalories++
-            weekCal += meal.calories
+          for (const meal of asDishes(d[type])) {
+            totalMeals++
+            const name = meal.name.trim()
+            dishCount[name] = (dishCount[name] || 0) + 1
+            if (meal.calories) {
+              totalCal += meal.calories
+              mealsWithCalories++
+              weekCal += meal.calories
+            }
           }
         }
-        if (d.lunch || d.dinner) weekDays++
+        if (asDishes(d.lunch).length || asDishes(d.dinner).length) weekDays++
       }
       caloriesByWeek.push({
         week: `S${m.week}`,

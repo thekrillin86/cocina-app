@@ -70,17 +70,16 @@ export default function ShoppingView({
 
   // Al llegar desde «Pasar ingredientes a la compra», abre el
   // importador ya apuntando a esa semana.
+  //
+  // Hay que esperar a que las listas terminen de cargar. Si se mira
+  // `lists` mientras `loading` sigue activo siempre parece que no hay
+  // ninguna, y la orden se consumía antes de poder abrir la hoja.
   useEffect(() => {
-    if (!autoWeek) return
-    if (!lists.length) {
-      avisar('Crea primero una lista de la compra')
-      onAutoWeekUsed?.()
-      return
-    }
+    if (!autoWeek || loading) return
     setPresetWeek(autoWeek)
     setShowImport(true)
     onAutoWeekUsed?.()
-  }, [autoWeek, lists.length])
+  }, [autoWeek, loading])
 
   if (loading) return <Loading />
 
@@ -156,13 +155,15 @@ export default function ShoppingView({
         />
       )}
 
-      {showImport && list && (
+      {showImport && (
         <ImportMenuModal
-          list={list}
+          lists={lists}
+          listaInicial={activeId}
           menus={menus}
           recipesById={recipesById}
           todayWeekId={todayWeekId}
           presetWeek={presetWeek}
+          onImportado={(listId) => setActiveId(listId)}
           onClose={() => {
             setShowImport(false)
             setPresetWeek(null)
@@ -720,19 +721,22 @@ export function ItemModal({ list, item, onClose }) {
 }
 
 /* ---------- IMPORTAR INGREDIENTES DE UNA SEMANA ---------- */
+
+const LISTA_NUEVA = '__nueva__'
+
 export function ImportMenuModal({
-  list,
+  lists,
+  listaInicial,
   menus,
   recipesById,
   todayWeekId,
   onClose,
+  onImportado,
   presetWeek,
 }) {
   const nextWeek = shiftWeekId(todayWeekId, 1)
-  const available = useMemo(
-    () => (menus || []).map((m) => m.id).sort().reverse(),
-    [menus]
-  )
+  const available = useMemo(() => (menus || []).map((m) => m.id).sort().reverse(), [menus])
+
   const [wid, setWid] = useState(
     () =>
       presetWeek ||
@@ -742,10 +746,17 @@ export function ImportMenuModal({
           ? todayWeekId
           : available[0])
   )
+  // A qué lista van los ingredientes: una de las que hay o una nueva
+  const [destino, setDestino] = useState(
+    () => listaInicial || (lists.length ? lists[0].id : LISTA_NUEVA)
+  )
+  const [nombreNueva, setNombreNueva] = useState('')
   const [mode, setMode] = useState('merge') // merge | replace
   const [importing, setImporting] = useState(false)
   const avisar = useToast()
 
+  const creandoLista = destino === LISTA_NUEVA || !lists.length
+  const listaDestino = lists.find((l) => l.id === destino)
   const menu = (menus || []).find((m) => m.id === wid)
 
   // Se usan las recetas que hay hoy en el recetario, no la copia
@@ -755,15 +766,25 @@ export function ImportMenuModal({
     [menu, wid, recipesById]
   )
 
+  const puedeImportar =
+    preview.length > 0 && !importing && (!creandoLista || nombreNueva.trim().length > 0)
+
   async function run() {
-    if (!preview.length) return
+    if (!puedeImportar) return
     setImporting(true)
     try {
-      await importWeekIntoList(list.id, preview, mode)
+      let listId = destino
+      let nombre = listaDestino?.name
+      if (creandoLista) {
+        nombre = nombreNueva.trim()
+        listId = await createShoppingList(nombre)
+      }
+      await importWeekIntoList(listId, preview, creandoLista ? 'replace' : mode)
+      onImportado?.(listId)
       avisar(
-        mode === 'replace'
-          ? `Lista reemplazada con ${preview.length} productos`
-          : `${preview.length} productos volcados en ${list.name}`,
+        mode === 'replace' && !creandoLista
+          ? `${nombre} reemplazada con ${preview.length} productos`
+          : `${preview.length} productos en ${nombre}`,
         'ok'
       )
       onClose()
@@ -774,8 +795,12 @@ export function ImportMenuModal({
     }
   }
 
+  const titulo = creandoLista
+    ? 'Del menú → lista nueva'
+    : `Del menú → ${listaDestino?.name || 'la compra'}`
+
   return (
-    <Sheet title={`Del menú → ${list.name}`} onClose={onClose} onCloseLabel="Cancelar" tall>
+    <Sheet title={titulo} onClose={onClose} onCloseLabel="Cancelar" tall>
       <div className="p-5 space-y-4">
         {!available.length ? (
           <EmptyState title="No hay semanas planificadas" hint="Planifica una semana primero." />
@@ -795,20 +820,64 @@ export function ImportMenuModal({
               </select>
             </Field>
 
-            <div className="flex gap-2">
-              <Chip active={mode === 'merge'} onClick={() => setMode('merge')}>
-                Añadir a lo que hay
-              </Chip>
-              <Chip active={mode === 'replace'} onClick={() => setMode('replace')}>
-                Reemplazar la lista
-              </Chip>
-            </div>
+            <Field label="¿A qué lista?">
+              {lists.length ? (
+                <select
+                  value={destino}
+                  onChange={(e) => setDestino(e.target.value)}
+                  className="input"
+                >
+                  {lists.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                      {l.items?.length ? ` · ${l.items.length} productos` : ' · vacía'}
+                    </option>
+                  ))}
+                  <option value={LISTA_NUEVA}>+ Crear una lista nueva…</option>
+                </select>
+              ) : (
+                <p className="text-sm text-ink-500">
+                  Todavía no tienes ninguna lista. Ponle nombre y se crea al importar.
+                </p>
+              )}
+            </Field>
 
-            <p className="text-xs text-ink-500">
-              {mode === 'merge'
-                ? 'Se pueden importar varias semanas seguidas: lo que ya esté puesto no se duplica ni se vuelve a sumar.'
-                : 'Se borrará lo que haya en la lista, incluido lo añadido a mano.'}
-            </p>
+            {creandoLista && (
+              <Field label="Nombre de la lista nueva" required>
+                <input
+                  type="text"
+                  value={nombreNueva}
+                  onChange={(e) => setNombreNueva(e.target.value)}
+                  placeholder="Ej: Lidl"
+                  className="input"
+                />
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {SUPERMARKETS.map((s) => (
+                    <Chip key={s} active={nombreNueva === s} onClick={() => setNombreNueva(s)}>
+                      {s}
+                    </Chip>
+                  ))}
+                </div>
+              </Field>
+            )}
+
+            {!creandoLista && (
+              <>
+                <div className="flex gap-2">
+                  <Chip active={mode === 'merge'} onClick={() => setMode('merge')}>
+                    Añadir a lo que hay
+                  </Chip>
+                  <Chip active={mode === 'replace'} onClick={() => setMode('replace')}>
+                    Reemplazar la lista
+                  </Chip>
+                </div>
+                <p className="text-xs text-ink-500">
+                  {mode === 'merge'
+                    ? 'Se pueden importar varias semanas seguidas: lo que ya esté puesto no se duplica ni se vuelve a sumar.'
+                    : 'Se borrará lo que haya en la lista, incluido lo añadido a mano.'}
+                </p>
+              </>
+            )}
 
             <div className="card p-4">
               <p className="label-caps text-teal-700 mb-2">{preview.length} productos</p>
@@ -824,10 +893,14 @@ export function ImportMenuModal({
 
             <button
               onClick={run}
-              disabled={!preview.length || importing}
+              disabled={!puedeImportar}
               className="btn-primary w-full disabled:opacity-40"
             >
-              {importing ? 'Importando…' : `Importar ${preview.length} productos`}
+              {importing
+                ? 'Importando…'
+                : creandoLista
+                  ? `Crear lista e importar ${preview.length} productos`
+                  : `Importar ${preview.length} productos`}
             </button>
           </>
         )}

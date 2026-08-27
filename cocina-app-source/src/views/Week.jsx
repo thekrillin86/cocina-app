@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Header, Loading, Sheet, Chip, useConfirm, useToast } from '../components/ui'
-import { MealPicker, MealDetail, ManualMealEditor } from '../components/meals'
+import { MealPicker, SlotDetail, ManualMealEditor } from '../components/meals'
 import {
   DAYS_ES,
   DAYS_SHORT,
@@ -11,15 +11,19 @@ import {
   weekRangeLabel,
 } from '../lib/dates'
 import {
-  setMeal,
-  setMealNote,
+  addDish,
+  replaceDish,
+  removeDish,
+  setDishNote,
   setDaySchedule,
   setWeekPersons,
   copyWeek,
   normalizeDays,
   countMeals,
+  countDishes,
   COMENSALES_POR_DEFECTO,
 } from '../lib/plan'
+import { asDishes } from '../lib/dishes'
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1)
 
@@ -36,6 +40,7 @@ export default function WeekView({
 }) {
   const [slot, setSlot] = useState(null) // { dayIndex, type }
   const [mode, setMode] = useState(null) // 'detail' | 'pick' | 'manual'
+  const [indice, setIndice] = useState(null) // plato a tocar; null = anadir uno nuevo
   const [editSchedule, setEditSchedule] = useState(null)
   const [ajustes, setAjustes] = useState(false)
   const [copiando, setCopiando] = useState(false)
@@ -48,22 +53,34 @@ export default function WeekView({
   const isCurrentWeek = wid === today.weekId
   const days = normalizeDays(menu, wid)
   const total = countMeals(menu)
+  const totalPlatos = countDishes(menu)
   const current = slot ? days[slot.dayIndex]?.[slot.type] : null
+  const platos = asDishes(current)
   const dayLabel = slot ? cap(DAYS_ES[slot.dayIndex]) : ''
 
   function cerrar() {
     setMode(null)
     setSlot(null)
+    setIndice(null)
   }
 
+  /* Si el hueco estaba vacio se cierra todo; si ya tenia platos se
+     vuelve a la ficha para poder seguir anadiendo o valorando. */
   async function assign(meal) {
-    await setMeal(wid, slot.dayIndex, slot.type, meal)
-    cerrar()
+    const estabaVacio = platos.length === 0
+    if (indice == null) await addDish(wid, slot.dayIndex, slot.type, meal)
+    else await replaceDish(wid, slot.dayIndex, slot.type, indice, meal)
+    if (estabaVacio) cerrar()
+    else {
+      setMode('detail')
+      setIndice(null)
+    }
   }
 
   function open(dayIndex, type) {
     setSlot({ dayIndex, type })
-    setMode(days[dayIndex]?.[type] ? 'detail' : 'pick')
+    setIndice(null)
+    setMode(asDishes(days[dayIndex]?.[type]).length ? 'detail' : 'pick')
   }
 
   async function copiarSemanaAnterior() {
@@ -122,7 +139,10 @@ export default function WeekView({
               Volver a la semana actual
             </button>
           )}
-          <span className="text-xs text-ink-500">{total} de 14 platos</span>
+          <span className="text-xs text-ink-500">
+            {total} de 14 comidas
+            {totalPlatos > total && ` · ${totalPlatos} platos`}
+          </span>
           <button onClick={() => setAjustes(true)} className="text-xs text-ink-500 font-medium">
             {menu?.persons || COMENSALES_POR_DEFECTO} comensales ⚙️
           </button>
@@ -163,18 +183,30 @@ export default function WeekView({
         </div>
       </div>
 
-      {mode === 'detail' && current && (
-        <MealDetail
-          meal={current}
+      {mode === 'detail' && slot && platos.length > 0 && (
+        <SlotDetail
+          slot={current}
           mealType={slot.type}
           dayLabel={dayLabel}
+          recipes={recipes}
+          stats={stats}
           onClose={cerrar}
-          onChange={() => setMode('pick')}
-          onManual={() => setMode('manual')}
-          onSetNote={(note) => setMealNote(wid, slot.dayIndex, slot.type, note)}
-          onRemove={async () => {
-            await setMeal(wid, slot.dayIndex, slot.type, null)
-            cerrar()
+          onChangeDish={(i) => {
+            setIndice(i)
+            setMode('pick')
+          }}
+          onAddDish={() => {
+            setIndice(null)
+            setMode('pick')
+          }}
+          onEditDish={(i) => {
+            setIndice(i)
+            setMode('manual')
+          }}
+          onSetNote={(i, note) => setDishNote(wid, slot.dayIndex, slot.type, i, note)}
+          onRemoveDish={async (i) => {
+            await removeDish(wid, slot.dayIndex, slot.type, i)
+            if (platos.length <= 1) cerrar()
           }}
         />
       )}
@@ -185,19 +217,20 @@ export default function WeekView({
           stats={stats}
           mealType={slot.type}
           dayLabel={dayLabel}
+          anadiendo={indice == null && platos.length > 0}
           onPick={assign}
           onManual={() => setMode('manual')}
-          onClose={cerrar}
+          onClose={() => (platos.length ? setMode('detail') : cerrar())}
         />
       )}
 
       {mode === 'manual' && slot && (
         <ManualMealEditor
-          meal={current}
+          meal={indice == null ? null : platos[indice]}
           mealType={slot.type}
           dayLabel={dayLabel}
           onSave={assign}
-          onClose={cerrar}
+          onClose={() => (platos.length ? setMode('detail') : cerrar())}
         />
       )}
 
@@ -254,31 +287,39 @@ function DayCard({ day, index, isToday, dateLabel, onOpen, onEditSchedule }) {
       {day.schedule && <p className="text-xs text-ink-500 italic mb-3 -mt-1">{day.schedule}</p>}
 
       <div className="grid grid-cols-2 gap-2">
-        <Slot label="Comida" meal={day.lunch} onClick={() => onOpen(index, 'lunch')} />
-        <Slot label="Cena" meal={day.dinner} onClick={() => onOpen(index, 'dinner')} />
+        <Slot label="Comida" slot={day.lunch} onClick={() => onOpen(index, 'lunch')} />
+        <Slot label="Cena" slot={day.dinner} onClick={() => onOpen(index, 'dinner')} />
       </div>
     </div>
   )
 }
 
-function Slot({ label, meal, onClick }) {
+function Slot({ label, slot, onClick }) {
+  const platos = asDishes(slot)
   return (
     <button
       onClick={onClick}
       className={`text-left rounded-2xl px-3 py-2.5 min-h-[72px] transition-colors ${
-        meal
+        platos.length
           ? 'bg-cream-100 active:bg-cream-200'
           : 'border-2 border-dashed border-cream-300 active:bg-cream-100'
       }`}
     >
       <p className="label-caps text-teal-700 text-[10px] mb-1">{label}</p>
-      {meal ? (
-        <>
-          <p className="text-sm text-ink-900 leading-snug line-clamp-2">{meal.name}</p>
-          {meal.notes && (
-            <span className="inline-block mt-1 text-[10px] text-terracotta-600">{meal.notes}</span>
-          )}
-        </>
+      {platos.length ? (
+        <div className="space-y-1">
+          {platos.map((meal, i) => (
+            <div key={i}>
+              <p className="text-sm text-ink-900 leading-snug line-clamp-2">
+                {i > 0 && <span className="text-ink-500">+ </span>}
+                {meal.name}
+              </p>
+              {meal.notes && (
+                <span className="inline-block text-[10px] text-terracotta-600">{meal.notes}</span>
+              )}
+            </div>
+          ))}
+        </div>
       ) : (
         <p className="text-sm text-ink-500">+ Elegir</p>
       )}

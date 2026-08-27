@@ -1,12 +1,14 @@
 import React, { useState } from 'react'
 import { Header, Loading, EmptyState } from '../components/ui'
-import { MealCard, MealPicker, MealDetail, ManualMealEditor } from '../components/meals'
+import { MealCard, MealPicker, SlotDetail, ManualMealEditor } from '../components/meals'
 import { formatLongDate, DAYS_ES } from '../lib/dates'
-import { setMeal, setMealNote, normalizeDays } from '../lib/plan'
+import { asDishes } from '../lib/dishes'
+import { addDish, replaceDish, removeDish, setDishNote, normalizeDays } from '../lib/plan'
 
 export default function TodayView({ menu, loading, wid, today, recipes, stats, onGoToWeek }) {
-  const [slot, setSlot] = useState(null) // { type }
-  const [mode, setMode] = useState(null) // 'detail' | 'pick' | 'manual'
+  const [tipo, setTipo] = useState(null) // 'lunch' | 'dinner'
+  const [modo, setModo] = useState(null) // 'detail' | 'pick' | 'manual'
+  const [indice, setIndice] = useState(null) // plato a tocar; null = añadir uno nuevo
 
   if (loading) return <Loading />
 
@@ -14,21 +16,37 @@ export default function TodayView({ menu, loading, wid, today, recipes, stats, o
   const days = menu ? normalizeDays(menu, wid) : null
   const todayData = days?.[todayIdx]
   const dayLabel = DAYS_ES[todayIdx]
-  const current = slot ? todayData?.[slot.type] : null
+  const slot = tipo ? todayData?.[tipo] : null
+  const platos = asDishes(slot)
 
   function cerrar() {
-    setMode(null)
-    setSlot(null)
+    setModo(null)
+    setTipo(null)
+    setIndice(null)
   }
 
-  async function assign(meal) {
-    await setMeal(wid, todayIdx, slot.type, meal)
-    cerrar()
+  function abrir(type) {
+    setTipo(type)
+    if (asDishes(todayData?.[type]).length) {
+      setModo('detail')
+      setIndice(null)
+    } else {
+      setModo('pick')
+      setIndice(null)
+    }
   }
 
-  function open(type) {
-    setSlot({ type })
-    setMode(todayData?.[type] ? 'detail' : 'pick')
+  /* Al asignar: si el hueco estaba vacío se cierra todo, y si ya
+     tenía platos se vuelve a la ficha para poder seguir. */
+  async function asignar(meal) {
+    const estabaVacio = platos.length === 0
+    if (indice == null) await addDish(wid, todayIdx, tipo, meal)
+    else await replaceDish(wid, todayIdx, tipo, indice, meal)
+    if (estabaVacio) cerrar()
+    else {
+      setModo('detail')
+      setIndice(null)
+    }
   }
 
   if (!menu) {
@@ -67,8 +85,8 @@ export default function TodayView({ menu, loading, wid, today, recipes, stats, o
 
         {todayData ? (
           <div className="space-y-4">
-            <MealCard meal={todayData.lunch} label="Comida" onEdit={() => open('lunch')} />
-            <MealCard meal={todayData.dinner} label="Cena" onEdit={() => open('dinner')} />
+            <MealCard slot={todayData.lunch} label="Comida" onEdit={() => abrir('lunch')} />
+            <MealCard slot={todayData.dinner} label="Cena" onEdit={() => abrir('dinner')} />
           </div>
         ) : (
           <EmptyState title="No hay datos para hoy" hint="Comprueba el menú semanal." />
@@ -82,41 +100,54 @@ export default function TodayView({ menu, loading, wid, today, recipes, stats, o
         </button>
       </div>
 
-      {mode === 'detail' && current && (
-        <MealDetail
-          meal={current}
-          mealType={slot.type}
+      {modo === 'detail' && tipo && (
+        <SlotDetail
+          slot={slot}
+          mealType={tipo}
           dayLabel={dayLabel}
+          recipes={recipes}
+          stats={stats}
           onClose={cerrar}
-          onChange={() => setMode('pick')}
-          onManual={() => setMode('manual')}
-          onSetNote={(note) => setMealNote(wid, todayIdx, slot.type, note)}
-          onRemove={async () => {
-            await setMeal(wid, todayIdx, slot.type, null)
-            cerrar()
+          onChangeDish={(i) => {
+            setIndice(i)
+            setModo('pick')
+          }}
+          onAddDish={() => {
+            setIndice(null)
+            setModo('pick')
+          }}
+          onEditDish={(i) => {
+            setIndice(i)
+            setModo('manual')
+          }}
+          onSetNote={(i, note) => setDishNote(wid, todayIdx, tipo, i, note)}
+          onRemoveDish={async (i) => {
+            await removeDish(wid, todayIdx, tipo, i)
+            if (platos.length <= 1) cerrar()
           }}
         />
       )}
 
-      {mode === 'pick' && slot && (
+      {modo === 'pick' && tipo && (
         <MealPicker
           recipes={recipes}
           stats={stats}
-          mealType={slot.type}
+          mealType={tipo}
           dayLabel={dayLabel}
-          onPick={assign}
-          onManual={() => setMode('manual')}
-          onClose={cerrar}
+          anadiendo={indice == null && platos.length > 0}
+          onPick={asignar}
+          onManual={() => setModo('manual')}
+          onClose={() => (platos.length ? setModo('detail') : cerrar())}
         />
       )}
 
-      {mode === 'manual' && slot && (
+      {modo === 'manual' && tipo && (
         <ManualMealEditor
-          meal={current}
-          mealType={slot.type}
+          meal={indice == null ? null : platos[indice]}
+          mealType={tipo}
           dayLabel={dayLabel}
-          onSave={assign}
-          onClose={cerrar}
+          onSave={asignar}
+          onClose={() => (platos.length ? setModo('detail') : cerrar())}
         />
       )}
     </div>

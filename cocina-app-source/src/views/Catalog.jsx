@@ -27,6 +27,7 @@ import {
   mealToRecipe,
 } from '../lib/catalog'
 import { normalize } from '../lib/ingredients'
+import { forEachDish } from '../lib/dishes'
 
 export default function CatalogView({ recipes, loading, menus, stats }) {
   const [search, setSearch] = useState('')
@@ -36,6 +37,7 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
   const [detail, setDetail] = useState(null)
   const [editing, setEditing] = useState(null) // 'new' | recipe
   const [syncing, setSyncing] = useState(false)
+  const confirmar = useConfirm()
   const avisar = useToast()
 
   const list = useMemo(() => {
@@ -52,60 +54,87 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
   }, [recipes, type, category, search, sort, stats])
 
   /* Carga el repertorio inicial + completa recetas desde los menús guardados */
-  async function syncAll() {
+  /* Calcula qué haría el completado, sin escribir nada.
+
+     Dos fuentes: el repertorio base que viene con la app y los platos
+     que ya aparecen en las semanas guardadas. Nunca borra ni pisa una
+     receta existente; como mucho le rellena la receta que le faltaba.
+     Compara por nombre sin acentos ni mayúsculas, así que un plato
+     escrito de dos formas distintas cuenta como dos. */
+  function calcularCompletado() {
+    const byName = new Map(recipes.map((r) => [normalize(r.name), r]))
+    const toSave = []
+    let delRepertorio = 0
+    let deMisMenus = 0
+    let completadas = 0
+
+    for (const seed of SEED_RECIPES) {
+      if (!byName.has(normalize(seed.name))) {
+        toSave.push(seed)
+        delRepertorio++
+        byName.set(normalize(seed.name), seed)
+      }
+    }
+
+    for (const menu of menus || []) {
+      forEachDish(menu, (meal, { mealType }) => {
+        const key = normalize(meal.name)
+        const existing = byName.get(key)
+        if (!existing) {
+          const r = mealToRecipe(meal, mealType)
+          const safeId =
+            'r-' +
+            (key.replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 52) ||
+              Math.random().toString(36).slice(2, 8))
+          const withId = { ...r, id: safeId }
+          toSave.push(withId)
+          deMisMenus++
+          byName.set(key, withId)
+        } else if (!existing.recipe && meal.recipe) {
+          toSave.push({
+            id: existing.id,
+            name: existing.name,
+            recipe: meal.recipe,
+            calories: existing.calories ?? meal.calories ?? null,
+            proteins: existing.proteins ?? meal.proteins ?? null,
+          })
+          completadas++
+          byName.set(key, { ...existing, recipe: meal.recipe })
+        }
+      })
+    }
+
+    return { toSave, delRepertorio, deMisMenus, completadas }
+  }
+
+  async function completarRecetario() {
+    const plan = calcularCompletado()
+
+    if (!plan.toSave.length) {
+      avisar('El recetario ya estaba completo, no hay nada que añadir')
+      return
+    }
+
+    const lineas = []
+    if (plan.delRepertorio) lineas.push(`${plan.delRepertorio} del repertorio que trae la app`)
+    if (plan.deMisMenus) lineas.push(`${plan.deMisMenus} que ya usaste en semanas anteriores`)
+    if (plan.completadas) lineas.push(`${plan.completadas} a las que les falta la receta`)
+
+    const ok = await confirmar({
+      title: 'Completar el recetario',
+      message: `Se van a añadir o completar ${plan.toSave.length} platos: ${lineas.join(
+        ', '
+      )}. No se borra ni se cambia nada de lo que ya tienes.`,
+      confirmLabel: 'Completar',
+    })
+    if (!ok) return
+
     setSyncing(true)
     try {
-      const byName = new Map(recipes.map((r) => [normalize(r.name), r]))
-      const toSave = []
-
-      // 1. Repertorio base que aún no exista
-      for (const seed of SEED_RECIPES) {
-        if (!byName.has(normalize(seed.name))) {
-          toSave.push(seed)
-          byName.set(normalize(seed.name), seed)
-        }
-      }
-
-      // 2. Platos que aparecen en menús guardados
-      for (const menu of menus || []) {
-        for (const d of menu.days || []) {
-          for (const t of ['lunch', 'dinner']) {
-            const meal = d[t]
-            if (!meal || !meal.name) continue
-            const key = normalize(meal.name)
-            const existing = byName.get(key)
-            if (!existing) {
-              const r = mealToRecipe(meal, t)
-              const safeId =
-                'r-' +
-                (key.replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 52) ||
-                  Math.random().toString(36).slice(2, 8))
-              const withId = { ...r, id: safeId }
-              toSave.push(withId)
-              byName.set(key, withId)
-            } else if (!existing.recipe && meal.recipe) {
-              // Completa la receta que faltaba
-              toSave.push({
-                id: existing.id,
-                name: existing.name,
-                recipe: meal.recipe,
-                calories: existing.calories ?? meal.calories ?? null,
-                proteins: existing.proteins ?? meal.proteins ?? null,
-              })
-              byName.set(key, { ...existing, recipe: meal.recipe })
-            }
-          }
-        }
-      }
-
-      if (!toSave.length) {
-        avisar('Todo estaba ya sincronizado')
-      } else {
-        await bulkSaveRecipes(toSave)
-        avisar(`${toSave.length} recetas añadidas o completadas`, 'ok')
-      }
+      await bulkSaveRecipes(plan.toSave)
+      avisar(`${plan.toSave.length} platos añadidos o completados`, 'ok')
     } catch (e) {
-      avisar('Error al sincronizar: ' + (e?.message || e), 'error')
+      avisar('No se ha podido completar: ' + (e?.message || e), 'error')
     } finally {
       setSyncing(false)
     }
@@ -133,12 +162,17 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
         </p>
 
         <button
-          onClick={syncAll}
+          onClick={completarRecetario}
           disabled={syncing}
-          className="w-full mb-5 py-2.5 rounded-2xl bg-teal-50 text-teal-700 text-sm font-medium active:bg-teal-100 disabled:opacity-50"
+          className="w-full py-2.5 rounded-2xl bg-teal-50 text-teal-700 text-sm font-medium active:bg-teal-100 disabled:opacity-50"
         >
-          {syncing ? 'Sincronizando…' : '🔄 Cargar repertorio y completar desde los menús'}
+          {syncing ? 'Completando…' : '🔄 Completar el recetario'}
         </button>
+        <p className="text-xs text-ink-500 mt-2 mb-5 leading-relaxed">
+          Añade el repertorio que trae la app y los platos que ya usaste en semanas anteriores,
+          y rellena las recetas que falten. Antes de hacer nada te dice qué va a añadir. No borra
+          ni cambia lo que ya tienes.
+        </p>
 
         {/* Filtros */}
         <div className="space-y-2.5 mb-5">

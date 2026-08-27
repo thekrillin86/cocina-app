@@ -299,6 +299,51 @@ describe('extractItemsFromMenu', () => {
     expect(tomate.recipes[0].qty).toBe('300 g')
   })
 
+  it('recoge los ingredientes de los dos platos de un mismo hueco', () => {
+    const menu = {
+      days: [
+        {
+          day: 'Lunes',
+          lunch: [
+            { name: 'Carne torrada', recipe: { ingredients: ['400 g de ternera'] } },
+            { name: 'Ensalada de tomate', recipe: { ingredients: ['300 g de tomate'] } },
+          ],
+          dinner: null,
+        },
+      ],
+    }
+    const items = extractItemsFromMenu(menu, WID)
+    expect(porNombre(items, 'Ternera').quantity).toBe('400 g')
+    expect(porNombre(items, 'Tomate').quantity).toBe('300 g')
+  })
+
+  it('un ingrediente compartido por los dos platos del hueco se suma una vez por plato', () => {
+    const menu = {
+      days: [
+        {
+          day: 'Lunes',
+          lunch: [
+            { name: 'Carne torrada', recipe: { ingredients: ['30 g de aceite de oliva'] } },
+            { name: 'Ensalada de tomate', recipe: { ingredients: ['20 g de aceite de oliva'] } },
+          ],
+          dinner: null,
+        },
+      ],
+    }
+    const aceite = porNombre(extractItemsFromMenu(menu, WID), 'Aceite de oliva')
+    expect(aceite.quantity).toBe('50 g')
+    expect(aceite.recipes).toHaveLength(2)
+    expect(aceite.recipes.map((r) => r.recipeName)).toEqual([
+      'Carne torrada',
+      'Ensalada de tomate',
+    ])
+  })
+
+  it('sigue leyendo los huecos guardados como un solo objeto', () => {
+    const items = extractItemsFromMenu(menuCon(['400 g de ternera']), WID)
+    expect(porNombre(items, 'Ternera').quantity).toBe('400 g')
+  })
+
   it('devuelve lista vacía si no hay menú', () => {
     expect(extractItemsFromMenu(null, WID)).toEqual([])
     expect(extractItemsFromMenu({ days: [] }, WID)).toEqual([])
