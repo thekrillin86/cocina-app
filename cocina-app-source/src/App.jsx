@@ -143,7 +143,9 @@ function MainApp() {
           />
         )}
 
-        {view === 'import' && <ImportView onDone={() => setView('today')} />}
+        {view === 'import' && (
+          <ImportView recipes={catalog} onDone={(destino) => setView(destino || 'today')} />
+        )}
       </main>
 
       <BottomNav view={view} setView={go} onMore={() => setMoreOpen(true)} />
