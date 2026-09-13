@@ -2,65 +2,126 @@
 REGLAS DE FIRESTORE — proyecto cocina-juanlc
 ==========================================================
 
-ESTADO ACTUAL (las que están publicadas ahora mismo)
-----------------------------------------------------------
-Sirven, pero conviene saber qué protegen y qué no.
+Las reglas deciden quién puede leer y escribir en la base de datos.
+Se publican a mano en la consola de Firebase:
 
-La app entra con signInAnonymously(), así que "request.auth != null"
-lo cumple CUALQUIERA que abra la web: la configuración de Firebase va
-en el JavaScript publicado (es pública por diseño) y con ella se puede
-pedir un usuario anónimo desde fuera de la app.
+    console.firebase.google.com
+      → proyecto cocina-juanlc
+      → Firestore Database
+      → pestaña Rules / Reglas
+      → pegar, Publicar
 
-Consecuencia: hoy la base de datos es legible y escribible por
-cualquiera que se moleste en mirar el bundle, y el PIN de /config/auth
-se puede leer en claro. El PIN es una puerta de cortesía en el
-cliente, no una medida de seguridad.
+Este fichero lleva los identificadores con hueco (UID_DE_JUAN y
+compañía) porque el repositorio es público. Los de verdad se pegan
+solo en la consola. No son secretos —saber un identificador no deja
+entrar a nadie, hace falta la contraseña— pero tampoco pintan nada
+en GitHub.
 
-Para un recetario familiar el riesgo es bajo, pero está aquí escrito
-para que sea una decisión y no un descuido.
+
+==========================================================
+1. LO QUE HAY PUBLICADO AHORA MISMO
+==========================================================
+
+Cualquiera que se autentique puede leer y escribir todo. Como el
+acceso anónimo está abierto, eso significa cualquiera que mire el
+JavaScript publicado. El PIN de /config/auth es una puerta de
+cortesía en el cliente: se lee en claro y no protege nada.
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /config/{doc} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+    match /menus/{weekId}          { allow read, write: if request.auth != null; }
+    match /shopping-lists/{listId} { allow read, write: if request.auth != null; }
+    match /recipes/{recipeId}      { allow read, write: if request.auth != null; }
+  }
+}
+
+Falta el buzón: con estas reglas, /inbox está cerrado y la app avisa
+de que no lo puede leer.
+
+
+==========================================================
+2. LA PUESTA EN MARCHA, PASO A PASO
+==========================================================
+
+EL ORDEN IMPORTA. Si se publican las reglas del punto 3 antes de que
+existan las cuentas y esté desplegado el acceso nuevo, nadie puede
+entrar en la app.
+
+Nunca se pierde el control: la consola de Firebase se abre con la
+cuenta de Google, no con la app. Si algo sale mal, se vuelve a entrar
+en la consola y se deshacen las reglas.
+
+  PASO 1 — Crear las cuentas                        (en la consola)
+    Authentication → Sign-in method
+      · Activar «Correo electrónico/contraseña»
+      · Dejar APAGADO el inicio de sesión sin contraseña
+    Authentication → Users → Add user
+      · Una cuenta para Juan, con correo real
+      · Una cuenta para Magda, con correo real
+      · Una cuenta para el asistente; el dominio da igual
+    Apuntar el User UID de cada una.
+
+  PASO 2 — Desplegar el acceso nuevo                    (en el repo)
+    AuthGate.jsx pasa de PIN a correo y contraseña.
+    Las reglas siguen siendo las del punto 1, así que si algo falla
+    la app sigue funcionando.
+
+  PASO 3 — Comprobar que se entra                       (en el móvil)
+    Cerrar la app del todo y volver a abrirla. Debe pedir correo y
+    contraseña, y dejar pasar. Hasta que esto funcione en los dos
+    móviles, NO seguir.
+
+  PASO 4 — Publicar las reglas del punto 3             (en la consola)
+    Con los identificadores de verdad puestos.
+
+  PASO 5 — Cerrar el acceso anónimo                    (en la consola)
+    Authentication → Sign-in method → Anónimo → Desactivar.
+    Solo cuando el paso 4 esté comprobado.
+
+
+==========================================================
+3. LAS REGLAS FINALES
+==========================================================
+
+Sustituir los tres huecos por los identificadores reales.
 
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // /config/auth — PIN familiar
+    // Las dos personas de la casa
+    function esDeCasa() {
+      return request.auth != null && request.auth.uid in [
+        'UID_DE_JUAN',
+        'UID_DE_MAGDA'
+      ];
+    }
+
+    // La cuenta que usa el asistente, solo para dejar lotes
+    function esElAsistente() {
+      return request.auth != null && request.auth.uid == 'UID_DEL_ASISTENTE';
+    }
+
+    // El PIN ya no se usa. Cerrado del todo.
     match /config/{doc} {
-      allow read: if request.auth != null;
-      allow write: if false;
+      allow read, write: if false;
     }
 
-    // /menus — menús semanales
-    match /menus/{weekId} {
-      allow read, write: if request.auth != null;
-    }
+    match /menus/{weekId}          { allow read, write: if esDeCasa(); }
+    match /shopping-lists/{listId} { allow read, write: if esDeCasa(); }
+    match /recipes/{recipeId}      { allow read, write: if esDeCasa(); }
 
-    // /shopping-lists — listas de la compra
-    match /shopping-lists/{listId} {
-      allow read, write: if request.auth != null;
-    }
-
-    // /recipes — recetas del recetario
-    match /recipes/{recipeId} {
-      allow read, write: if request.auth != null;
-    }
-  }
-}
-
-
-==========================================================
-BUZÓN DE RECETAS  /inbox/{loteId}
-==========================================================
-
-El asistente deja lotes de recetas desde fuera de la app y Juan los
-aprueba en el móvil. Hay que AÑADIR este bloque a las reglas de
-arriba; sin él la app avisa de que no puede leer el buzón.
-
-    // /inbox — lotes de recetas dejados por el asistente
+    // El buzón: el asistente solo puede DEJAR lotes, con esta forma
+    // exacta. Ni los lee, ni los cambia, ni los borra.
     match /inbox/{loteId} {
-
-      // Cualquiera autenticado puede DEJAR un lote, con la forma exacta
-      allow create: if request.auth != null
+      allow create: if esElAsistente()
         && request.resource.data.keys().hasOnly(
              ['createdAt','source','batch','status','recipes'])
         && request.resource.data.status == 'pending'
@@ -73,83 +134,6 @@ arriba; sin él la app avisa de que no puede leer el buzón.
         && request.resource.data.recipes.size() > 0
         && request.resource.data.recipes.size() <= 50;
 
-      // Leer, aprobar y descartar, solo desde la app
-      allow read, update, delete: if request.auth != null;
-    }
-
-Qué protege y qué no
---------------------
-La forma del documento sí: quien escriba no puede meter campos
-inventados, ni marcar un lote como ya revisado, ni mandar más de 50
-recetas de golpe (un documento de Firestore son 1 MiB).
-
-Quién escribe, no. `request.auth != null` lo cumple cualquiera,
-porque el acceso anónimo está abierto. Hoy eso no añade ningún
-agujero nuevo —la base de datos entera ya está así—, pero conviene
-saber que cualquiera podría dejar lotes en el buzón.
-
-Lo que sí protege de verdad es que el buzón está en cuarentena: la
-app lo enseña para revisarlo y no aplica nada sola. Nada entra en el
-recetario sin que Juan lo apruebe.
-
-
-==========================================================
-MEJORA RECOMENDADA: dos cuentas reales
-==========================================================
-
-Cierra el agujero de arriba. NO pegues estas reglas hasta haber
-completado los pasos 1 y 2, o te quedas fuera de tu propia app.
-
-PASO 1 — Crear las dos cuentas
-  Consola de Firebase → Authentication → Sign-in method
-    · Activar "Correo electrónico/contraseña"
-    · (Opcional) desactivar "Anónimo" cuando ya no se use
-  Authentication → Users → Add user
-    · Crear la cuenta de Juan y la de Magda
-    · Copiar el UID de cada una (columna "User UID")
-
-PASO 2 — Cambiar el login de la app
-  Sustituir signInAnonymously() por signInWithEmailAndPassword()
-  en src/AuthGate.jsx: pedir correo y contraseña en vez del PIN.
-  Firebase ya guarda la sesión (browserLocalPersistence), así que
-  se seguirá pidiendo solo la primera vez en cada móvil.
-
-PASO 3 — Publicar estas reglas, con los UID reales
-  Consola de Firebase → Firestore Database → Rules
-
-rules_version = '2';
-
-service cloud.firestore {
-  match /databases/{database}/documents {
-
-    // Solo estos dos usuarios, por UID
-    function esDeCasa() {
-      return request.auth != null && request.auth.uid in [
-        'UID_DE_JUAN',
-        'UID_DE_MAGDA'
-      ];
-    }
-
-    // Con cuentas reales, /config/auth ya no hace falta:
-    // el PIN deja de existir. Se deja cerrado del todo.
-    match /config/{doc} {
-      allow read, write: if false;
-    }
-
-    match /menus/{weekId}        { allow read, write: if esDeCasa(); }
-    match /shopping-lists/{listId} { allow read, write: if esDeCasa(); }
-    match /recipes/{recipeId}    { allow read, write: if esDeCasa(); }
-
-    // El buzón: leerlo y vaciarlo es cosa de casa, dejar lotes no
-    match /inbox/{loteId} {
-      allow create: if esElAsistente()
-        && request.resource.data.keys().hasOnly(
-             ['createdAt','source','batch','status','recipes'])
-        && request.resource.data.status == 'pending'
-        && request.resource.data.recipes is list
-        && request.resource.data.recipes.size() > 0
-        && request.resource.data.recipes.size() <= 50;
-
       allow read, update, delete: if esDeCasa();
     }
 
@@ -158,37 +142,84 @@ service cloud.firestore {
   }
 }
 
-QUIÉN ES EL ASISTENTE — la decisión de la fase 4
-------------------------------------------------
-Al cerrar el resto con esDeCasa(), el buzón se queda siendo la única
-puerta abierta. Hay dos formas de cerrarla, y conviene elegir:
 
-  A) Dejarla abierta a cualquier anónimo (lo que proponía el brief)
+==========================================================
+4. COMPROBARLAS ANTES DE FIARSE
+==========================================================
 
-       function esElAsistente() { return request.auth != null; }
+Consola → Firestore Database → Rules → pestaña Playground:
 
-     No hay que pasarle ninguna credencial al asistente, pero hay que
-     mantener activado el proveedor anónimo en la consola de Firebase
-     y cualquiera puede dejar lotes. Sigue sin poder leer ni tocar
-     nada, y tú decides qué entra.
+  · get de /menus/2026-37, autenticado con el UID de Juan
+      → debe PERMITIRSE
+  · el mismo get sin autenticar
+      → debe DENEGARSE
+  · create en /inbox/prueba con el UID del asistente y un documento
+    que tenga createdAt, source, batch, status 'pending' y recipes
+      → debe PERMITIRSE
+  · get de /menus/2026-37 con el UID del asistente
+      → debe DENEGARSE
 
-  B) Darle su propia cuenta (recomendado)
+Y en la app: Más → Buzón debe decir «El buzón está vacío» en vez de
+avisar de que faltan las reglas.
 
-       function esElAsistente() {
-         return request.auth != null && request.auth.uid == 'UID_DEL_ASISTENTE';
-       }
 
-     Authentication → Users → Add user, una cuenta solo para esto.
-     El asistente entra con accounts:signInWithPassword en vez de
-     accounts:signUp, y el proveedor anónimo se puede DESACTIVAR del
-     todo. Hay que darle un correo y una contraseña, pero es una
-     cuenta que solo puede crear lotes en el buzón: no lee, no borra
-     y no toca nada más.
+==========================================================
+5. CÓMO ESCRIBE EL ASISTENTE
+==========================================================
 
-Con la opción A hay que dejar el acceso anónimo activado. Con la B no,
-y es la única que cierra la casa entera.
+Por la API REST de Firestore, con la cuenta del paso 1:
 
-PASO 4 — Comprobar antes de dar por bueno
-  Consola → Firestore → Rules → Playground:
-    · lectura de /menus/2026-34 autenticado con el UID de Juan  → permitida
-    · la misma lectura sin autenticar                            → denegada
+  1. Pedir un token
+       POST https://identitytoolkit.googleapis.com/v1/
+            accounts:signInWithPassword?key=<apiKey web>
+       { "email": "...", "password": "...", "returnSecureToken": true }
+
+  2. Dejar el lote
+       POST https://firestore.googleapis.com/v1/projects/cocina-juanlc/
+            databases/(default)/documents/inbox
+       Authorization: Bearer <idToken del paso 1>
+
+La apiKey web es la que ya está en src/firebase.js y es pública por
+diseño. El correo y la contraseña del asistente, no: son la única
+credencial del montaje y solo la necesita quien envía los lotes.
+
+Máximo 50 recetas por lote, porque un documento de Firestore son
+1 MiB. Si hay más, se parten en varios.
+
+El documento tiene esta forma exacta:
+
+  {
+    createdAt: '2026-09-17T05:10:00.000Z',
+    source: 'talaia',
+    batch: 'lote-02',
+    status: 'pending',
+    recipes: [ ... ]
+  }
+
+Y cada receta:
+
+  {
+    name: 'Frittata de pollo',
+    type: 'comida' | 'cena',
+    category: 'huevos',            // ensalada, pescado, carne, pasta,
+                                   // arroz, legumbres, huevos, crema,
+                                   // verduras, otro
+    proteins: 'Pollo y huevo',
+    calories: 260,
+    rating: 0,
+    source: 'Cookidoo',
+    recipe: {
+      method: 'Thermomix TM6',
+      source: 'https://cookidoo.es/...',
+      ingredients: ['Huevo 4ud', 'Pimiento rojo 200g'],
+      steps: ['🔧 Método: ...', 'Batir los huevos']
+    }
+  }
+
+Obligatorios solo `name` y `type`. El resto se rellena solo: la
+categoría se adivina por el nombre, y los ingredientes y pasos se
+admiten también como texto con saltos de línea.
+
+Un nombre que ya esté en el recetario se fusiona con su ficha en vez
+de duplicarse, y solo se escribe lo que traiga el JSON: no se pierden
+valoraciones ni recetas.
