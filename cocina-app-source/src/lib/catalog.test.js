@@ -8,6 +8,9 @@ import {
   withLiveRecipes,
   indexRecipesById,
   sortRecipes,
+  hasRecipeBody,
+  menuReferences,
+  isRecipeUsed,
 } from './catalog'
 import { currentWeekId, getTodayWeekIndex, weekId, getISOWeek } from './dates'
 
@@ -159,6 +162,69 @@ describe('guessCategory', () => {
     // de "boloñesa", así que la lasaña acababa en Ensaladas
     expect(guessCategory('Lasaña boloñesa con champiñones')).not.toBe('ensalada')
     expect(guessCategory('Espaguetis a la boloñesa')).not.toBe('ensalada')
+  })
+})
+
+describe('hasRecipeBody', () => {
+  it('exige ingredientes o pasos, no solo que exista el objeto', () => {
+    expect(hasRecipeBody({ name: 'X', recipe: { ingredients: ['Huevo'] } })).toBe(true)
+    expect(hasRecipeBody({ name: 'X', recipe: { steps: ['Batir'] } })).toBe(true)
+    expect(hasRecipeBody({ name: 'X', recipe: { ingredients: 'Huevo 2ud' } })).toBe(true)
+  })
+
+  it('un cuerpo vacío o con las claves a null no cuenta', () => {
+    expect(hasRecipeBody({ name: 'X', recipe: null })).toBe(false)
+    expect(hasRecipeBody({ name: 'X' })).toBe(false)
+    expect(
+      hasRecipeBody({ name: 'X', recipe: { method: 'TM6', ingredients: [], steps: null } })
+    ).toBe(false)
+    expect(hasRecipeBody({ name: 'X', recipe: { ingredients: '   ' } })).toBe(false)
+    expect(hasRecipeBody(null)).toBe(false)
+  })
+})
+
+describe('menuReferences e isRecipeUsed', () => {
+  const menus = [
+    {
+      id: '2026-35',
+      days: [
+        {
+          lunch: [
+            { name: 'Carne torrada', recipeId: 'r-carne' },
+            { name: 'Ensalada de tomate' },
+          ],
+          dinner: { name: 'Sopa' },
+        },
+      ],
+    },
+  ]
+
+  it('recoge identificadores y nombres de todos los platos', () => {
+    const ref = menuReferences(menus)
+    expect(ref.ids.has('r-carne')).toBe(true)
+    expect(ref.nombres.has('ensalada de tomate')).toBe(true)
+    expect(ref.nombres.has('sopa')).toBe(true)
+  })
+
+  it('reconoce la receta usada por identificador', () => {
+    const ref = menuReferences(menus)
+    expect(isRecipeUsed({ id: 'r-carne', name: 'Nombre cambiado' }, ref)).toBe(true)
+  })
+
+  it('reconoce la receta usada por nombre, sin acentos ni mayúsculas', () => {
+    const ref = menuReferences(menus)
+    expect(isRecipeUsed({ id: 'otro', name: 'ENSALADA DE TOMATE' }, ref)).toBe(true)
+  })
+
+  it('dice que no cuando no se usa en ninguna semana', () => {
+    const ref = menuReferences(menus)
+    expect(isRecipeUsed({ id: 'x', name: 'Plato que nadie cocinó' }, ref)).toBe(false)
+  })
+
+  it('aguanta que no haya menús', () => {
+    const ref = menuReferences([])
+    expect(ref.ids.size).toBe(0)
+    expect(isRecipeUsed({ id: 'x', name: 'Y' }, ref)).toBe(false)
   })
 })
 

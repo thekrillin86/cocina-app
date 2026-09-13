@@ -14,6 +14,7 @@ src/
     dates.js           Semana ISO, fechas reales de cada día
     useToday.js        Fecha de hoy revalidada (la PWA vive días abierta)
     dishes.js          Un hueco puede llevar varios platos
+    recipesImport.js   Validar recetas pegadas o dejadas en el buzón
     format.js          Formato de valores
     ingredients.js     Limpieza, alias, cantidades y categorías de la compra
     catalog.js         Categorías de plato, valoración, estadísticas, receta viva
@@ -31,7 +32,7 @@ src/
     Shopping.jsx       Listas por supermercado
     Stats.jsx          Gráficas (se carga bajo demanda: arrastra recharts)
     History.jsx        Semanas guardadas
-    Import.jsx         Importar un menú en JSON
+    Import.jsx         Importar recetas sueltas o un menú, en JSON
 ```
 
 ## Cómo funciona por dentro
@@ -65,6 +66,30 @@ ingredientes del segundo. En Firestore el hueco se guarda como objeto
 suelto cuando solo hay un plato y como lista cuando hay varios, así
 que los menús anteriores no cambian de forma. Todo pasa por
 `asDishes` / `fromDishes` en `lib/dishes.js`.
+
+**Importar recetas.** La pantalla «Importar» reconoce sola lo que se
+le pega: una lista de recetas o un objeto con `recipes` van al
+recetario; un objeto con `week`, `year` y `days` va a la planificación.
+La validación vive en `lib/recipesImport.js` y o pasa todo o no se
+escribe nada.
+
+Ojo con los nombres repetidos: `newRecipeId` añade un sufijo aleatorio,
+así que dos altas del mismo nombre generan identificadores distintos y
+`{merge:true}` no fusiona nada por su cuenta. Por eso la importación
+busca el nombre normalizado en el recetario y reutiliza el
+identificador que ya existe. Al fusionar solo se escribe lo que trae el
+JSON, para no borrar valoraciones ni recetas.
+
+**Limpiar el recetario.** El chip «Sin receta» filtra los platos que
+son solo un nombre, y el modo selección permite borrarlos en lote. El
+histórico de cocinado no se pierde: sale de los menús guardados, no del
+recetario.
+
+Al «Completar el recetario» hay una casilla, desmarcada por defecto,
+para no volver a meter platos sin receta. Afecta al repertorio que trae
+la app y a los platos de los menús: de las 97 del repertorio base, 88
+son solo un nombre, así que sin esa casilla el borrado no serviría de
+nada.
 
 **Valorar desde el menú.** La valoración vive en la receta del
 recetario, no en el plato del menú. Al valorar desde «Hoy» o «Semana»

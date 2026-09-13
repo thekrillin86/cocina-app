@@ -144,7 +144,11 @@ function MainApp() {
         )}
 
         {view === 'import' && (
-          <ImportView recipes={catalog} onDone={(destino) => setView(destino || 'today')} />
+          <ImportView
+            recipes={catalog}
+            menus={menus}
+            onDone={(destino) => setView(destino || 'today')}
+          />
         )}
       </main>
 
@@ -211,7 +215,12 @@ function MoreMenu({ open, onClose, currentView, setView }) {
     },
     { id: 'stats', label: 'Estadísticas', icon: IconStats, desc: 'Calorías y platos más usados' },
     { id: 'history', label: 'Histórico', icon: IconHistory, desc: 'Semanas guardadas' },
-    { id: 'import', label: 'Importar JSON', icon: IconImport, desc: 'Pegar un menú completo' },
+    {
+      id: 'import',
+      label: 'Importar JSON',
+      icon: IconImport,
+      desc: 'Pegar recetas sueltas o un menú completo',
+    },
   ]
 
   return (

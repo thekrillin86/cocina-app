@@ -316,3 +316,43 @@ export function findRecipeForMeal(meal, recipes) {
   const clave = normalize(meal.name)
   return recipes.find((r) => normalize(r.name) === clave) || null
 }
+
+/* ============================================================
+   PLATOS QUE ESTÁN EN USO
+
+   Antes de borrar recetas conviene saber cuáles aparecen en alguna
+   semana guardada. No es un impedimento —el menú conserva su propia
+   copia de la receta y el histórico de cocinado vive en los menús,
+   no aquí— pero sí es algo que avisar antes de borrar en lote.
+   ============================================================ */
+export function menuReferences(menus) {
+  const ids = new Set()
+  const nombres = new Set()
+  for (const menu of menus || []) {
+    forEachDish(menu, (meal) => {
+      if (meal.recipeId) ids.add(meal.recipeId)
+      if (meal.name) nombres.add(normalize(meal.name))
+    })
+  }
+  return { ids, nombres }
+}
+
+/* ¿Esta receta del recetario se usa en algún menú guardado? */
+export function isRecipeUsed(recipe, referencias) {
+  if (!recipe || !referencias) return false
+  if (recipe.id && referencias.ids.has(recipe.id)) return true
+  return referencias.nombres.has(normalize(recipe.name))
+}
+
+/* ¿Esta receta trae receta de verdad?
+
+   No basta con que exista el objeto `recipe`: puede venir con las
+   claves a null. Lo que la hace útil es tener ingredientes o pasos.
+   Los platos que solo son un nombre son los que ensucian el
+   recetario cuando se completa desde los menús. */
+export function hasRecipeBody(recipe) {
+  const cuerpo = recipe?.recipe
+  if (!cuerpo) return false
+  const tiene = (v) => (Array.isArray(v) ? v.length > 0 : !!String(v || '').trim())
+  return tiene(cuerpo.ingredients) || tiene(cuerpo.steps)
+}

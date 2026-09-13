@@ -2,6 +2,9 @@ import React, { useState } from 'react'
 import { Header, useConfirm, useToast } from '../components/ui'
 import { importMenuToFirestore, bulkSaveRecipes } from '../lib/db'
 import { detectPayload, parseRecipesPayload } from '../lib/recipesImport'
+import { weekId } from '../lib/dates'
+import { countMeals } from '../lib/plan'
+import { listaLegible } from '../lib/format'
 
 const EJEMPLO = `[
   {
@@ -16,13 +19,7 @@ const EJEMPLO = `[
   }
 ]`
 
-/* Enumera unos pocos nombres sin llenar la pantalla */
-function enumerar(nombres, tope = 5) {
-  if (nombres.length <= tope) return nombres.join(', ')
-  return `${nombres.slice(0, tope).join(', ')} y ${nombres.length - tope} más`
-}
-
-export function ImportView({ recipes = [], onDone }) {
+export function ImportView({ recipes = [], menus = [], onDone }) {
   const [text, setText] = useState('')
   const [errores, setErrores] = useState([])
   const [guardando, setGuardando] = useState(false)
@@ -45,6 +42,23 @@ export function ImportView({ recipes = [], onDone }) {
   }
 
   async function importarMenu(menu) {
+    /* Importar un menú reemplaza el documento de esa semana entero.
+       Si ya hay algo planificado conviene decirlo antes, que si no se
+       pierde sin avisar. */
+    const existente = (menus || []).find((m) => m.id === weekId(menu.year, menu.week))
+    if (existente) {
+      const platos = countMeals(existente)
+      const ok = await confirmar({
+        title: `La semana ${menu.week} ya existe`,
+        message: platos
+          ? `Se reemplaza entera y se pierden los ${platos} platos que tiene ahora. Esto no se puede deshacer.`
+          : 'Se reemplaza entera. Esto no se puede deshacer.',
+        confirmLabel: 'Reemplazar',
+        danger: true,
+      })
+      if (!ok) return
+    }
+
     setGuardando(true)
     try {
       await importMenuToFirestore(menu)
@@ -74,7 +88,7 @@ export function ImportView({ recipes = [], onDone }) {
     }
 
     const aviso = lote.colisiones.length
-      ? ` Las repetidas se fusionan con la ficha que ya tienes —se conserva la valoración y todo lo que el JSON no traiga—: ${enumerar(lote.colisiones)}.`
+      ? ` Las repetidas se fusionan con la ficha que ya tienes —se conserva la valoración y todo lo que el JSON no traiga—: ${listaLegible(lote.colisiones)}.`
       : ''
 
     const ok = await confirmar({

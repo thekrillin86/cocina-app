@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useCallback } from 'react'
 import {
   Header,
   Loading,
@@ -11,8 +11,8 @@ import {
   useToast,
 } from '../components/ui'
 import { RecipeRow, RecipeBody } from '../components/meals'
-import { asMultiline, formatProteins } from '../lib/format'
-import { saveRecipe, deleteRecipe, bulkSaveRecipes } from '../lib/db'
+import { asMultiline, formatProteins, listaLegible } from '../lib/format'
+import { saveRecipe, deleteRecipe, bulkSaveRecipes, bulkDeleteRecipes } from '../lib/db'
 import { SEED_RECIPES } from '../data/seedRecipes'
 import {
   DISH_CATEGORIES,
@@ -25,6 +25,9 @@ import {
   lastCookedLabel,
   guessCategory,
   mealToRecipe,
+  hasRecipeBody,
+  menuReferences,
+  isRecipeUsed,
 } from '../lib/catalog'
 import { normalize } from '../lib/ingredients'
 import { forEachDish } from '../lib/dishes'
@@ -33,17 +36,30 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
   const [search, setSearch] = useState('')
   const [type, setType] = useState('todos')
   const [category, setCategory] = useState('todas')
+  const [soloSinReceta, setSoloSinReceta] = useState(false)
   const [sort, setSort] = useState('sugerido')
   const [detail, setDetail] = useState(null)
   const [editing, setEditing] = useState(null) // 'new' | recipe
+  const [completar, setCompletar] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  // null = modo selección apagado; si no, el conjunto de identificadores marcados
+  const [seleccion, setSeleccion] = useState(null)
+  const [borrando, setBorrando] = useState(false)
   const confirmar = useConfirm()
   const avisar = useToast()
+
+  const enSeleccion = seleccion !== null
+  const marcadas = seleccion || new Set()
+
+  const referencias = useMemo(() => menuReferences(menus), [menus])
+  const conReceta = useMemo(() => recipes.filter(hasRecipeBody).length, [recipes])
+  const sinReceta = recipes.length - conReceta
 
   const list = useMemo(() => {
     let l = recipes
     if (type !== 'todos') l = l.filter((r) => (r.type || 'comida') === type)
     if (category !== 'todas') l = l.filter((r) => (r.category || guessCategory(r.name)) === category)
+    if (soloSinReceta) l = l.filter((r) => !hasRecipeBody(r))
     if (search.trim()) {
       const q = normalize(search)
       l = l.filter(
@@ -51,88 +67,94 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
       )
     }
     return sortRecipes(l, sort, stats)
-  }, [recipes, type, category, search, sort, stats])
+  }, [recipes, type, category, soloSinReceta, search, sort, stats])
 
-  /* Carga el repertorio inicial + completa recetas desde los menús guardados */
-  /* Calcula qué haría el completado, sin escribir nada.
+  /* ============================================================
+     COMPLETAR EL RECETARIO
 
-     Dos fuentes: el repertorio base que viene con la app y los platos
-     que ya aparecen en las semanas guardadas. Nunca borra ni pisa una
-     receta existente; como mucho le rellena la receta que le faltaba.
+     Calcula qué haría, sin escribir nada. Dos fuentes: el repertorio
+     que trae la app y los platos que ya aparecen en semanas
+     guardadas. Nunca borra ni pisa una receta existente; como mucho
+     le rellena la que le faltaba.
+
+     `incluirSinReceta` es lo que evita que el recetario se vuelva a
+     llenar de nombres sueltos: desmarcado, solo entran los platos
+     que traen ingredientes o pasos. Afecta a las dos fuentes, porque
+     el repertorio base también trae muchos que son solo un nombre y
+     si no volverían todos en cuanto se pulsara el botón.
+
      Compara por nombre sin acentos ni mayúsculas, así que un plato
-     escrito de dos formas distintas cuenta como dos. */
-  function calcularCompletado() {
-    const byName = new Map(recipes.map((r) => [normalize(r.name), r]))
-    const toSave = []
-    let delRepertorio = 0
-    let deMisMenus = 0
-    let completadas = 0
+     escrito de dos formas distintas cuenta como dos.
+     ============================================================ */
+  const calcularCompletado = useCallback(
+    (incluirSinReceta) => {
+      const byName = new Map(recipes.map((r) => [normalize(r.name), r]))
+      const toSave = []
+      let delRepertorio = 0
+      let deMisMenus = 0
+      let completadas = 0
+      let omitidos = 0
 
-    for (const seed of SEED_RECIPES) {
-      if (!byName.has(normalize(seed.name))) {
+      for (const seed of SEED_RECIPES) {
+        if (byName.has(normalize(seed.name))) continue
+        if (!incluirSinReceta && !hasRecipeBody(seed)) {
+          omitidos++
+          continue
+        }
         toSave.push(seed)
         delRepertorio++
         byName.set(normalize(seed.name), seed)
       }
-    }
 
-    for (const menu of menus || []) {
-      forEachDish(menu, (meal, { mealType }) => {
-        const key = normalize(meal.name)
-        const existing = byName.get(key)
-        if (!existing) {
-          const r = mealToRecipe(meal, mealType)
-          const safeId =
-            'r-' +
-            (key.replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 52) ||
-              Math.random().toString(36).slice(2, 8))
-          const withId = { ...r, id: safeId }
-          toSave.push(withId)
-          deMisMenus++
-          byName.set(key, withId)
-        } else if (!existing.recipe && meal.recipe) {
-          toSave.push({
-            id: existing.id,
-            name: existing.name,
-            recipe: meal.recipe,
-            calories: existing.calories ?? meal.calories ?? null,
-            proteins: existing.proteins ?? meal.proteins ?? null,
-          })
-          completadas++
-          byName.set(key, { ...existing, recipe: meal.recipe })
-        }
-      })
-    }
+      for (const menu of menus || []) {
+        forEachDish(menu, (meal, { mealType }) => {
+          const key = normalize(meal.name)
+          const existente = byName.get(key)
 
-    return { toSave, delRepertorio, deMisMenus, completadas }
-  }
+          if (!existente) {
+            if (!incluirSinReceta && !hasRecipeBody(meal)) {
+              omitidos++
+              return
+            }
+            const r = mealToRecipe(meal, mealType)
+            const safeId =
+              'r-' +
+              (key.replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 52) ||
+                Math.random().toString(36).slice(2, 8))
+            const withId = { ...r, id: safeId }
+            toSave.push(withId)
+            deMisMenus++
+            byName.set(key, withId)
+            return
+          }
 
-  async function completarRecetario() {
-    const plan = calcularCompletado()
+          // Rellenar una receta que falta siempre es útil, traiga de
+          // donde traiga: eso no ensucia nada.
+          if (!hasRecipeBody(existente) && hasRecipeBody(meal)) {
+            toSave.push({
+              id: existente.id,
+              name: existente.name,
+              recipe: meal.recipe,
+              calories: existente.calories ?? meal.calories ?? null,
+              proteins: existente.proteins ?? meal.proteins ?? null,
+            })
+            completadas++
+            byName.set(key, { ...existente, recipe: meal.recipe })
+          }
+        })
+      }
 
-    if (!plan.toSave.length) {
-      avisar('El recetario ya estaba completo, no hay nada que añadir')
-      return
-    }
+      return { toSave, delRepertorio, deMisMenus, completadas, omitidos }
+    },
+    [recipes, menus]
+  )
 
-    const lineas = []
-    if (plan.delRepertorio) lineas.push(`${plan.delRepertorio} del repertorio que trae la app`)
-    if (plan.deMisMenus) lineas.push(`${plan.deMisMenus} que ya usaste en semanas anteriores`)
-    if (plan.completadas) lineas.push(`${plan.completadas} a las que les falta la receta`)
-
-    const ok = await confirmar({
-      title: 'Completar el recetario',
-      message: `Se van a añadir o completar ${plan.toSave.length} platos: ${lineas.join(
-        ', '
-      )}. No se borra ni se cambia nada de lo que ya tienes.`,
-      confirmLabel: 'Completar',
-    })
-    if (!ok) return
-
+  async function aplicarCompletado(plan) {
     setSyncing(true)
     try {
       await bulkSaveRecipes(plan.toSave)
       avisar(`${plan.toSave.length} platos añadidos o completados`, 'ok')
+      setCompletar(false)
     } catch (e) {
       avisar('No se ha podido completar: ' + (e?.message || e), 'error')
     } finally {
@@ -140,39 +162,107 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
     }
   }
 
-  if (loading) return <Loading />
+  /* ============================================================
+     BORRADO EN LOTE
+     ============================================================ */
 
-  const withRecipe = recipes.filter((r) => r.recipe).length
+  function alternarMarca(id) {
+    setSeleccion((previa) => {
+      const siguiente = new Set(previa)
+      if (siguiente.has(id)) siguiente.delete(id)
+      else siguiente.add(id)
+      return siguiente
+    })
+  }
+
+  async function borrarSeleccionadas() {
+    const elegidas = recipes.filter((r) => marcadas.has(r.id))
+    if (!elegidas.length) return
+
+    const enUso = elegidas.filter((r) => isRecipeUsed(r, referencias))
+    const aviso = enUso.length
+      ? ` ${enUso.length} ${enUso.length === 1 ? 'aparece' : 'aparecen'} en alguna semana guardada (${listaLegible(
+          enUso.map((r) => r.name)
+        )}); esas semanas conservan su propia copia de la receta.`
+      : ''
+
+    const ok = await confirmar({
+      title: `Eliminar ${elegidas.length} ${elegidas.length === 1 ? 'plato' : 'platos'}`,
+      message: `Se borran del recetario. No se pierde el histórico: las veces que los has cocinado se calculan desde los menús, no desde aquí.${aviso}`,
+      confirmLabel: 'Eliminar',
+      danger: true,
+    })
+    if (!ok) return
+
+    setBorrando(true)
+    try {
+      await bulkDeleteRecipes(elegidas.map((r) => r.id))
+      avisar(
+        `${elegidas.length} ${elegidas.length === 1 ? 'plato eliminado' : 'platos eliminados'}`,
+        'ok'
+      )
+      setSeleccion(null)
+    } catch (e) {
+      avisar('No se han podido eliminar: ' + (e?.message || e), 'error')
+    } finally {
+      setBorrando(false)
+    }
+  }
+
+  if (loading) return <Loading />
 
   return (
     <div className="animate-fade-in-up">
       <Header />
       <div className="px-6">
-        <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center justify-between mb-1 gap-3">
           <h1 className="font-display text-3xl text-ink-900">Recetario</h1>
-          <button
-            onClick={() => setEditing('new')}
-            className="text-terracotta-600 text-sm font-medium"
-          >
-            + Nueva
-          </button>
+          <div className="flex items-center gap-4 shrink-0">
+            {recipes.length > 0 && (
+              <button
+                onClick={() => setSeleccion(enSeleccion ? null : new Set())}
+                className="text-ink-500 text-sm font-medium"
+              >
+                {enSeleccion ? 'Cancelar' : 'Seleccionar'}
+              </button>
+            )}
+            {!enSeleccion && (
+              <button
+                onClick={() => setEditing('new')}
+                className="text-terracotta-600 text-sm font-medium"
+              >
+                + Nueva
+              </button>
+            )}
+          </div>
         </div>
-        <p className="text-sm text-ink-500 mb-4">
-          {recipes.length} platos · {withRecipe} con receta completa
-        </p>
 
         <button
-          onClick={completarRecetario}
-          disabled={syncing}
-          className="w-full py-2.5 rounded-2xl bg-teal-50 text-teal-700 text-sm font-medium active:bg-teal-100 disabled:opacity-50"
+          onClick={() => setSoloSinReceta((v) => !v)}
+          className="text-sm text-ink-500 mb-4 text-left"
         >
-          {syncing ? 'Completando…' : '🔄 Completar el recetario'}
+          {recipes.length} platos · {conReceta} con receta ·{' '}
+          <span className={soloSinReceta ? 'text-terracotta-600 font-semibold' : 'underline'}>
+            {sinReceta} sin receta
+          </span>
         </button>
-        <p className="text-xs text-ink-500 mt-2 mb-5 leading-relaxed">
-          Añade el repertorio que trae la app y los platos que ya usaste en semanas anteriores,
-          y rellena las recetas que falten. Antes de hacer nada te dice qué va a añadir. No borra
-          ni cambia lo que ya tienes.
-        </p>
+
+        {!enSeleccion && (
+          <>
+            <button
+              onClick={() => setCompletar(true)}
+              disabled={syncing}
+              className="w-full py-2.5 rounded-2xl bg-teal-50 text-teal-700 text-sm font-medium active:bg-teal-100 disabled:opacity-50"
+            >
+              🔄 Completar el recetario
+            </button>
+            <p className="text-xs text-ink-500 mt-2 mb-5 leading-relaxed">
+              Añade el repertorio que trae la app y los platos que ya usaste en semanas
+              anteriores, y rellena las recetas que falten. Antes de hacer nada te dice qué va a
+              añadir. No borra ni cambia lo que ya tienes.
+            </p>
+          </>
+        )}
 
         {/* Filtros */}
         <div className="space-y-2.5 mb-5">
@@ -183,7 +273,7 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
             placeholder="Buscar plato…"
             className="input"
           />
-          <div className="flex gap-2">
+          <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
             <Chip active={type === 'todos'} onClick={() => setType('todos')}>
               Todo
             </Chip>
@@ -192,6 +282,9 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
                 {t.icon} {t.label}s
               </Chip>
             ))}
+            <Chip active={soloSinReceta} onClick={() => setSoloSinReceta((v) => !v)}>
+              📄 Sin receta
+            </Chip>
           </div>
           <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
             <Chip active={category === 'todas'} onClick={() => setCategory('todas')} tone="teal">
@@ -227,17 +320,43 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
             hint={
               recipes.length
                 ? 'Prueba con otro filtro.'
-                : 'Pulsa el botón de arriba para cargar todo el repertorio de golpe.'
+                : 'Pulsa «Completar el recetario» para cargar el repertorio de golpe.'
             }
           />
         ) : (
-          <div className="space-y-2 pb-6">
+          <div className={`space-y-2 ${enSeleccion ? 'pb-24' : 'pb-6'}`}>
             {list.map((r) => (
-              <RecipeRow key={r.id} recipe={r} stats={stats} onClick={() => setDetail(r)} />
+              <RecipeRow
+                key={r.id}
+                recipe={r}
+                stats={stats}
+                onClick={() => (enSeleccion ? alternarMarca(r.id) : setDetail(r))}
+                right={enSeleccion ? <Casilla marcada={marcadas.has(r.id)} /> : undefined}
+              />
             ))}
           </div>
         )}
       </div>
+
+      {enSeleccion && (
+        <BarraSeleccion
+          marcadas={marcadas.size}
+          filtradas={list.length}
+          borrando={borrando}
+          onSeleccionarTodas={() => setSeleccion(new Set(list.map((r) => r.id)))}
+          onLimpiar={() => setSeleccion(new Set())}
+          onBorrar={borrarSeleccionadas}
+        />
+      )}
+
+      {completar && (
+        <CompletarSheet
+          calcular={calcularCompletado}
+          trabajando={syncing}
+          onClose={() => setCompletar(false)}
+          onCompletar={aplicarCompletado}
+        />
+      )}
 
       {detail && (
         <RecipeDetail
@@ -262,6 +381,139 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
         />
       )}
     </div>
+  )
+}
+
+/* Marca de selección, igual que la de la lista de la compra */
+function Casilla({ marcada }) {
+  return (
+    <span
+      className={`shrink-0 mt-0.5 w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+        marcada ? 'bg-terracotta-500 border-terracotta-500' : 'border-cream-400'
+      }`}
+      aria-hidden
+    >
+      {marcada && (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M5 12l5 5L20 7"
+            stroke="#FDFBF7"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </span>
+  )
+}
+
+function BarraSeleccion({
+  marcadas,
+  filtradas,
+  borrando,
+  onSeleccionarTodas,
+  onLimpiar,
+  onBorrar,
+}) {
+  const todasMarcadas = marcadas > 0 && marcadas === filtradas
+  return (
+    <div className="fixed inset-x-0 bottom-[4.5rem] z-40 px-4">
+      <div className="card p-3 flex items-center gap-3 max-w-lg mx-auto shadow-card">
+        <button
+          onClick={todasMarcadas ? onLimpiar : onSeleccionarTodas}
+          className="text-xs text-teal-700 font-medium shrink-0"
+        >
+          {todasMarcadas ? 'Ninguna' : `Todas (${filtradas})`}
+        </button>
+        <span className="text-sm text-ink-700 flex-1 text-center">
+          {marcadas} {marcadas === 1 ? 'marcado' : 'marcados'}
+        </span>
+        <button
+          onClick={onBorrar}
+          disabled={!marcadas || borrando}
+          className="shrink-0 px-4 py-2 rounded-full bg-terracotta-600 text-cream-50 text-sm font-medium active:bg-terracotta-700 disabled:opacity-40"
+        >
+          {borrando ? 'Borrando…' : 'Eliminar'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ---------- HOJA DE «COMPLETAR EL RECETARIO» ---------- */
+function CompletarSheet({ calcular, trabajando, onClose, onCompletar }) {
+  const [incluirSinReceta, setIncluirSinReceta] = useState(false)
+  const plan = useMemo(() => calcular(incluirSinReceta), [calcular, incluirSinReceta])
+
+  const lineas = []
+  if (plan.delRepertorio) {
+    lineas.push(`${plan.delRepertorio} del repertorio que trae la app`)
+  }
+  if (plan.deMisMenus) {
+    lineas.push(`${plan.deMisMenus} que ya usaste en semanas anteriores`)
+  }
+  if (plan.completadas) {
+    lineas.push(`${plan.completadas} a ${plan.completadas === 1 ? 'la que le' : 'las que les'} falta la receta`)
+  }
+
+  return (
+    <Sheet title="Completar el recetario" onClose={onClose} onCloseLabel="Cancelar">
+      <div className="p-5 space-y-4">
+        <button
+          onClick={() => setIncluirSinReceta((v) => !v)}
+          className="w-full flex items-start gap-3 text-left"
+        >
+          <Casilla marcada={incluirSinReceta} />
+          <span className="flex-1 min-w-0">
+            <span className="block text-ink-900 text-sm font-medium">
+              Añadir también los platos que no traen receta
+            </span>
+            <span className="block text-xs text-ink-500 mt-0.5 leading-relaxed">
+              Son nombres sueltos, sin ingredientes ni pasos. Si los borraste a propósito, deja
+              esto sin marcar y no volverán.
+            </span>
+          </span>
+        </button>
+
+        <div className="card p-4">
+          {plan.toSave.length ? (
+            <>
+              <p className="font-display text-xl text-ink-900 mb-2">
+                {plan.toSave.length} {plan.toSave.length === 1 ? 'plato' : 'platos'}
+              </p>
+              <ul className="text-sm text-ink-700 space-y-1">
+                {lineas.map((l) => (
+                  <li key={l}>· {l}</li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="text-sm text-ink-700">No hay nada que añadir ni completar.</p>
+          )}
+
+          {!incluirSinReceta && plan.omitidos > 0 && (
+            <p className="text-xs text-ink-500 mt-3 pt-3 border-t border-cream-200">
+              Se dejan fuera {plan.omitidos} platos que son solo un nombre. Marca la casilla de
+              arriba si los quieres.
+            </p>
+          )}
+        </div>
+
+        <p className="text-xs text-ink-500">
+          No se borra ni se cambia nada de lo que ya tienes: solo se añaden platos nuevos y se
+          rellenan las recetas que falten.
+        </p>
+
+        <button
+          onClick={() => onCompletar(plan)}
+          disabled={!plan.toSave.length || trabajando}
+          className="btn-primary w-full disabled:opacity-40"
+        >
+          {trabajando ? 'Completando…' : `Completar (${plan.toSave.length})`}
+        </button>
+      </div>
+    </Sheet>
   )
 }
 

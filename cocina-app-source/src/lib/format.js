@@ -22,3 +22,11 @@ export function formatProteins(value) {
   if (Array.isArray(value)) return value.join(' + ')
   return String(value)
 }
+
+/* "A, B y 3 más" — para no llenar un diálogo de nombres */
+export function listaLegible(nombres, tope = 5) {
+  const l = (nombres || []).filter(Boolean)
+  if (!l.length) return ''
+  if (l.length <= tope) return l.join(', ')
+  return `${l.slice(0, tope).join(', ')} y ${l.length - tope} más`
+}

@@ -262,6 +262,22 @@ export async function deleteRecipe(id) {
   await deleteDoc(doc(db, 'recipes', id))
 }
 
+/* Borrado masivo de recetas.
+
+   Borrar del recetario no toca el histórico: las veces que se ha
+   cocinado un plato salen de los menús guardados, no de aquí. */
+export async function bulkDeleteRecipes(ids) {
+  const limpios = (ids || []).filter(Boolean)
+  const chunks = []
+  for (let i = 0; i < limpios.length; i += 400) chunks.push(limpios.slice(i, i + 400))
+  for (const chunk of chunks) {
+    const batch = writeBatch(db)
+    for (const id of chunk) batch.delete(doc(db, 'recipes', id))
+    await batch.commit()
+  }
+  return limpios.length
+}
+
 /* Alta masiva de recetas (repertorio inicial / sincronización desde menús) */
 export async function bulkSaveRecipes(list) {
   const chunks = []
