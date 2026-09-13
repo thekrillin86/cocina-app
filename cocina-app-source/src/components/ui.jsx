@@ -338,6 +338,14 @@ export function IconShopping() {
     </svg>
   )
 }
+export function IconInbox() {
+  return (
+    <svg {...iconProps}>
+      <path d="M4 13h4l1.5 3h5L16 13h4" />
+      <path d="M5.5 5h13l1.5 8v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5l1.5-8z" />
+    </svg>
+  )
+}
 export function IconMore() {
   return (
     <svg {...iconProps}>

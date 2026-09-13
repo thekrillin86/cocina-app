@@ -20,6 +20,7 @@ import {
   deleteDoc,
   onSnapshot,
   query,
+  where,
   runTransaction,
   writeBatch,
 } from 'firebase/firestore'
@@ -205,6 +206,54 @@ export async function importWeekIntoList(listId, entrantes, modo = 'merge') {
     return siguiente
   })
   return total
+}
+
+/* ============================================================
+   BUZÓN DE RECETAS
+
+   El asistente deja lotes en /inbox desde fuera de la app. Lo que
+   haya ahí es contenido de origen externo: la app lo enseña para
+   revisarlo y no aplica nada por su cuenta.
+   ============================================================ */
+
+export function useInbox() {
+  const [batches, setBatches] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, 'inbox'), where('status', '==', 'pending')),
+      (snap) => {
+        const lista = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+        // Los más nuevos arriba
+        lista.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+        setBatches(lista)
+        setError(null)
+        setLoading(false)
+      },
+      (err) => {
+        // Sin las reglas publicadas esto da permission-denied: la app
+        // tiene que seguir funcionando igual.
+        console.error('Error leyendo el buzón:', err)
+        setError(err)
+        setBatches([])
+        setLoading(false)
+      }
+    )
+    return unsub
+  }, [])
+
+  return { batches, loading, error }
+}
+
+/* El lote queda marcado, no se borra: así se sabe que se revisó */
+export async function markInboxDone(loteId) {
+  await updateDoc(doc(db, 'inbox', loteId), { status: 'done', doneAt: ahora() })
+}
+
+export async function deleteInboxBatch(loteId) {
+  await deleteDoc(doc(db, 'inbox', loteId))
 }
 
 /* ============================================================

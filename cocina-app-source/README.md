@@ -33,6 +33,7 @@ src/
     Stats.jsx          Gráficas (se carga bajo demanda: arrastra recharts)
     History.jsx        Semanas guardadas
     Import.jsx         Importar recetas sueltas o un menú, en JSON
+    Inbox.jsx          Revisar los lotes que deja el asistente
 ```
 
 ## Cómo funciona por dentro
@@ -96,12 +97,19 @@ recetario, no en el plato del menú. Al valorar desde «Hoy» o «Semana»
 se busca la receta por identificador y, si el plato se escribió a
 mano, por nombre; si no está, se ofrece guardarla antes.
 
+**Buzón de recetas.** El asistente deja lotes en `/inbox` desde fuera
+de la app, por la API REST de Firestore. Lo que hay ahí es contenido
+de origen externo: la app lo enseña para revisarlo y no aplica nada
+sola. Cada receta se aprueba o se desmarca a mano, y el lote queda en
+`done` al terminar. La misma validación que la importación pegada.
+
 ## Colecciones Firestore
 
 - `/config/auth` — PIN familiar (solo lectura desde la app)
 - `/menus/{año-semana}` — planificación semanal
 - `/recipes/{id}` — catálogo de recetas
 - `/shopping-lists/{id}` — listas de la compra
+- `/inbox/{loteId}` — lotes de recetas por revisar
 
 Ver `FIRESTORE_RULES.txt` para las reglas y sus límites actuales.
 

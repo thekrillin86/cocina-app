@@ -49,6 +49,51 @@ service cloud.firestore {
 
 
 ==========================================================
+BUZÓN DE RECETAS  /inbox/{loteId}
+==========================================================
+
+El asistente deja lotes de recetas desde fuera de la app y Juan los
+aprueba en el móvil. Hay que AÑADIR este bloque a las reglas de
+arriba; sin él la app avisa de que no puede leer el buzón.
+
+    // /inbox — lotes de recetas dejados por el asistente
+    match /inbox/{loteId} {
+
+      // Cualquiera autenticado puede DEJAR un lote, con la forma exacta
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(
+             ['createdAt','source','batch','status','recipes'])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt is string
+        && request.resource.data.source is string
+        && request.resource.data.source.size() <= 60
+        && request.resource.data.batch is string
+        && request.resource.data.batch.size() <= 60
+        && request.resource.data.recipes is list
+        && request.resource.data.recipes.size() > 0
+        && request.resource.data.recipes.size() <= 50;
+
+      // Leer, aprobar y descartar, solo desde la app
+      allow read, update, delete: if request.auth != null;
+    }
+
+Qué protege y qué no
+--------------------
+La forma del documento sí: quien escriba no puede meter campos
+inventados, ni marcar un lote como ya revisado, ni mandar más de 50
+recetas de golpe (un documento de Firestore son 1 MiB).
+
+Quién escribe, no. `request.auth != null` lo cumple cualquiera,
+porque el acceso anónimo está abierto. Hoy eso no añade ningún
+agujero nuevo —la base de datos entera ya está así—, pero conviene
+saber que cualquiera podría dejar lotes en el buzón.
+
+Lo que sí protege de verdad es que el buzón está en cuarentena: la
+app lo enseña para revisarlo y no aplica nada sola. Nada entra en el
+recetario sin que Juan lo apruebe.
+
+
+==========================================================
 MEJORA RECOMENDADA: dos cuentas reales
 ==========================================================
 
@@ -95,10 +140,53 @@ service cloud.firestore {
     match /shopping-lists/{listId} { allow read, write: if esDeCasa(); }
     match /recipes/{recipeId}    { allow read, write: if esDeCasa(); }
 
+    // El buzón: leerlo y vaciarlo es cosa de casa, dejar lotes no
+    match /inbox/{loteId} {
+      allow create: if esElAsistente()
+        && request.resource.data.keys().hasOnly(
+             ['createdAt','source','batch','status','recipes'])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.recipes is list
+        && request.resource.data.recipes.size() > 0
+        && request.resource.data.recipes.size() <= 50;
+
+      allow read, update, delete: if esDeCasa();
+    }
+
     // Todo lo demás, cerrado
     match /{document=**} { allow read, write: if false; }
   }
 }
+
+QUIÉN ES EL ASISTENTE — la decisión de la fase 4
+------------------------------------------------
+Al cerrar el resto con esDeCasa(), el buzón se queda siendo la única
+puerta abierta. Hay dos formas de cerrarla, y conviene elegir:
+
+  A) Dejarla abierta a cualquier anónimo (lo que proponía el brief)
+
+       function esElAsistente() { return request.auth != null; }
+
+     No hay que pasarle ninguna credencial al asistente, pero hay que
+     mantener activado el proveedor anónimo en la consola de Firebase
+     y cualquiera puede dejar lotes. Sigue sin poder leer ni tocar
+     nada, y tú decides qué entra.
+
+  B) Darle su propia cuenta (recomendado)
+
+       function esElAsistente() {
+         return request.auth != null && request.auth.uid == 'UID_DEL_ASISTENTE';
+       }
+
+     Authentication → Users → Add user, una cuenta solo para esto.
+     El asistente entra con accounts:signInWithPassword en vez de
+     accounts:signUp, y el proveedor anónimo se puede DESACTIVAR del
+     todo. Hay que darle un correo y una contraseña, pero es una
+     cuenta que solo puede crear lotes en el buzón: no lee, no borra
+     y no toca nada más.
+
+Con la opción A hay que dejar el acceso anónimo activado. Con la B no,
+y es la única que cierra la casa entera.
 
 PASO 4 — Comprobar antes de dar por bueno
   Consola → Firestore → Rules → Playground:

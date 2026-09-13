@@ -2,7 +2,7 @@ import React, { useState, useMemo, lazy, Suspense } from 'react'
 import { AuthGate } from './AuthGate'
 import { shiftWeekId } from './lib/dates'
 import { useToday } from './lib/useToday'
-import { useMenu, useAllMenus, useRecipes } from './lib/db'
+import { useMenu, useAllMenus, useRecipes, useInbox } from './lib/db'
 import {
   computeUsageStats,
   guessCategory,
@@ -20,6 +20,7 @@ import {
   IconStats,
   IconHistory,
   IconImport,
+  IconInbox,
 } from './components/ui'
 import TodayView from './views/Today'
 import WeekView from './views/Week'
@@ -27,6 +28,7 @@ import CatalogView from './views/Catalog'
 import ShoppingView from './views/Shopping'
 import { HistoryView } from './views/History'
 import { ImportView } from './views/Import'
+import { InboxView } from './views/Inbox'
 
 // Las graficas arrastran recharts (~400 KB): solo se descargan si se
 // entra en Estadisticas.
@@ -44,7 +46,7 @@ export default function App() {
   )
 }
 
-const MORE_VIEWS = ['recipes', 'stats', 'history', 'import']
+const MORE_VIEWS = ['recipes', 'stats', 'history', 'import', 'inbox']
 
 function MainApp() {
   const [view, setView] = useState('today')
@@ -59,6 +61,7 @@ function MainApp() {
   const { menu: menuCrudo, loading } = useMenu(activeWeekId)
   const { menus, loading: loadingMenus } = useAllMenus()
   const { recipes, loading: loadingRecipes } = useRecipes()
+  const { batches, loading: loadingInbox, error: errorInbox } = useInbox()
 
   // Recetas con la categoría siempre resuelta
   const catalog = useMemo(
@@ -150,11 +153,31 @@ function MainApp() {
             onDone={(destino) => setView(destino || 'today')}
           />
         )}
+
+        {view === 'inbox' && (
+          <InboxView
+            batches={batches}
+            loading={loadingInbox}
+            error={errorInbox}
+            recipes={catalog}
+          />
+        )}
       </main>
 
-      <BottomNav view={view} setView={go} onMore={() => setMoreOpen(true)} />
+      <BottomNav
+        view={view}
+        setView={go}
+        onMore={() => setMoreOpen(true)}
+        avisos={batches.length}
+      />
 
-      <MoreMenu open={moreOpen} onClose={() => setMoreOpen(false)} currentView={view} setView={go} />
+      <MoreMenu
+        open={moreOpen}
+        onClose={() => setMoreOpen(false)}
+        currentView={view}
+        setView={go}
+        pendientes={batches.length}
+      />
     </div>
   )
 }
@@ -162,7 +185,7 @@ function MainApp() {
 /* ============================================================
    NAVEGACIÓN
    ============================================================ */
-function BottomNav({ view, setView, onMore }) {
+function BottomNav({ view, setView, onMore, avisos = 0 }) {
   const items = [
     { id: 'today', label: 'Hoy', icon: IconToday },
     { id: 'week', label: 'Semana', icon: IconWeek },
@@ -192,11 +215,17 @@ function BottomNav({ view, setView, onMore }) {
         })}
         <button
           onClick={onMore}
-          className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-colors ${
+          className={`relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-colors ${
             moreActive ? 'text-terracotta-600' : 'text-ink-500'
           }`}
         >
           <IconMore />
+          {avisos > 0 && (
+            <span
+              className="absolute top-1 right-2 w-2 h-2 rounded-full bg-terracotta-500"
+              aria-label={`${avisos} lotes por revisar`}
+            />
+          )}
           <span className="text-[10px] font-medium tracking-wide">Más</span>
         </button>
       </div>
@@ -204,7 +233,7 @@ function BottomNav({ view, setView, onMore }) {
   )
 }
 
-function MoreMenu({ open, onClose, currentView, setView }) {
+function MoreMenu({ open, onClose, currentView, setView, pendientes = 0 }) {
   if (!open) return null
   const items = [
     {
@@ -220,6 +249,15 @@ function MoreMenu({ open, onClose, currentView, setView }) {
       label: 'Importar JSON',
       icon: IconImport,
       desc: 'Pegar recetas sueltas o un menú completo',
+    },
+    {
+      id: 'inbox',
+      label: 'Buzón',
+      icon: IconInbox,
+      desc: pendientes
+        ? `${pendientes} ${pendientes === 1 ? 'lote' : 'lotes'} por revisar`
+        : 'Recetas que deja el asistente',
+      insignia: pendientes,
     },
   ]
 
@@ -266,6 +304,11 @@ function MoreMenu({ open, onClose, currentView, setView }) {
                     <p className="font-display text-lg leading-tight">{it.label}</p>
                     <p className="text-xs text-ink-500">{it.desc}</p>
                   </div>
+                  {it.insignia > 0 && (
+                    <span className="shrink-0 min-w-[1.5rem] h-6 px-2 rounded-full bg-terracotta-500 text-cream-50 text-xs font-semibold flex items-center justify-center">
+                      {it.insignia}
+                    </span>
+                  )}
                 </button>
               )
             })}
