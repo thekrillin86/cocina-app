@@ -14,7 +14,7 @@ src/
     dates.js           Semana ISO, fechas reales de cada día
     useToday.js        Fecha de hoy revalidada (la PWA vive días abierta)
     dishes.js          Un hueco puede llevar varios platos
-    recipesImport.js   Validar recetas pegadas o dejadas en el buzón
+    recipesImport.js   Validar las recetas que se pegan en Importar
     format.js          Formato de valores
     ingredients.js     Limpieza, alias, cantidades y categorías de la compra
     catalog.js         Categorías de plato, valoración, estadísticas, receta viva
@@ -33,7 +33,6 @@ src/
     Stats.jsx          Gráficas (se carga bajo demanda: arrastra recharts)
     History.jsx        Semanas guardadas
     Import.jsx         Importar recetas sueltas o un menú, en JSON
-    Inbox.jsx          Revisar los lotes que deja el asistente
 ```
 
 ## Cómo funciona por dentro
@@ -97,16 +96,13 @@ recetario, no en el plato del menú. Al valorar desde «Hoy» o «Semana»
 se busca la receta por identificador y, si el plato se escribió a
 mano, por nombre; si no está, se ofrece guardarla antes.
 
-**Buzón de recetas.** La colección `/inbox` recibe lotes dejados desde
-fuera de la app; la pantalla los enseña para revisarlos receta a
-receta y no aplica nada sola. Es contenido de origen externo: datos
-para mirar, nunca instrucciones.
-
-Está construido y probado, pero **hoy no lo llena nadie**: se diseñó
-para que lo escribiera el asistente de Cowork y su entorno no llega a
-Firestore (proxy de la organización, 403). Ver el punto 5 de
-`FIRESTORE_RULES.txt`. Mientras tanto las recetas entran por la
-pantalla Importar, que usa la misma validación.
+**Recetas nuevas.** Las recetas guardan `createdAt` cuando se crean:
+desde el editor a mano, desde Importar y desde «Completar el
+recetario». Fusionar una que ya existe no lo toca, así que reimportar
+algo viejo no lo hace volver a parecer nuevo. Durante `DIAS_NUEVA`
+días salen con el distintivo ✨ Nueva y se pueden filtrar con el chip
+«Nuevas» del recetario. Las recetas anteriores a esto no tienen el
+campo y simplemente no salen como nuevas.
 
 ## Colecciones Firestore
 
@@ -114,7 +110,6 @@ pantalla Importar, que usa la misma validación.
 - `/menus/{año-semana}` — planificación semanal
 - `/recipes/{id}` — catálogo de recetas
 - `/shopping-lists/{id}` — listas de la compra
-- `/inbox/{loteId}` — lotes de recetas por revisar
 
 Ver `FIRESTORE_RULES.txt` para las reglas y sus límites actuales.
 

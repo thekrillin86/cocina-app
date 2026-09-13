@@ -9,6 +9,8 @@ import {
   indexRecipesById,
   sortRecipes,
   hasRecipeBody,
+  isNewRecipe,
+  DIAS_NUEVA,
   menuReferences,
   isRecipeUsed,
 } from './catalog'
@@ -180,6 +182,52 @@ describe('hasRecipeBody', () => {
     ).toBe(false)
     expect(hasRecipeBody({ name: 'X', recipe: { ingredients: '   ' } })).toBe(false)
     expect(hasRecipeBody(null)).toBe(false)
+  })
+})
+
+describe('isNewRecipe', () => {
+  const AHORA = Date.parse('2026-09-13T12:00:00.000Z')
+  const haceDias = (d) => new Date(AHORA - d * 86400000).toISOString()
+
+  it('es nueva dentro de la ventana', () => {
+    expect(isNewRecipe({ createdAt: haceDias(0) }, DIAS_NUEVA, AHORA)).toBe(true)
+    expect(isNewRecipe({ createdAt: haceDias(3) }, DIAS_NUEVA, AHORA)).toBe(true)
+    expect(isNewRecipe({ createdAt: haceDias(6.9) }, DIAS_NUEVA, AHORA)).toBe(true)
+  })
+
+  it('deja de serlo pasada la ventana', () => {
+    expect(isNewRecipe({ createdAt: haceDias(7.1) }, DIAS_NUEVA, AHORA)).toBe(false)
+    expect(isNewRecipe({ createdAt: haceDias(40) }, DIAS_NUEVA, AHORA)).toBe(false)
+  })
+
+  it('las recetas sin fecha de alta no son nuevas', () => {
+    // Son las de antes de que existiera este campo
+    expect(isNewRecipe({ name: 'Vieja' }, DIAS_NUEVA, AHORA)).toBe(false)
+    expect(isNewRecipe({ createdAt: null }, DIAS_NUEVA, AHORA)).toBe(false)
+    expect(isNewRecipe({ createdAt: 'lo que sea' }, DIAS_NUEVA, AHORA)).toBe(false)
+    expect(isNewRecipe(null, DIAS_NUEVA, AHORA)).toBe(false)
+  })
+
+  it('la ventana se puede cambiar', () => {
+    expect(isNewRecipe({ createdAt: haceDias(10) }, 30, AHORA)).toBe(true)
+    expect(isNewRecipe({ createdAt: haceDias(10) }, 3, AHORA)).toBe(false)
+  })
+})
+
+describe('sortRecipes · recién añadidas', () => {
+  const stats = new Map()
+  const lista = [
+    { id: 'a', name: 'Sin fecha' },
+    { id: 'b', name: 'Vieja', createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'c', name: 'Reciente', createdAt: '2026-09-12T00:00:00.000Z' },
+  ]
+
+  it('pone las más recientes delante y las que no tienen fecha al final', () => {
+    expect(sortRecipes(lista, 'nuevas', stats).map((r) => r.name)).toEqual([
+      'Reciente',
+      'Vieja',
+      'Sin fecha',
+    ])
   })
 })
 

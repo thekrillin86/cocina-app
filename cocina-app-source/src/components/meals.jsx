@@ -14,6 +14,7 @@ import {
   recipeToMeal,
   mealToRecipe,
   findRecipeForMeal,
+  isNewRecipe,
   guessCategory,
 } from '../lib/catalog'
 import { asDishes, slotCalories } from '../lib/dishes'
@@ -291,6 +292,7 @@ export function RecipeRow({ recipe, stats, onClick, right }) {
             {rt.short && <span className="shrink-0 text-sm">{rt.short}</span>}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
+            {isNewRecipe(recipe) && <Tag tone="teal">✨ Nueva</Tag>}
             <span className={toneCls}>🕘 {lastCookedLabel(s.daysAgo)}</span>
             <span className="text-ink-500">
               🔁 {s.count} {s.count === 1 ? 'vez' : 'veces'}

@@ -34,11 +34,8 @@ la del asistente únicamente puede dejar lotes en el buzón: no lee, no
 cambia y no borra nada.
 
 OJO con la cuenta del asistente: se creó para que el asistente de
-Cowork dejara lotes en el buzón, y NO PUEDE HACERLO. Comprobado el
-13/09/2026: su entorno sale por un proxy que deniega por política
-firestore.googleapis.com e identitytoolkit.googleapis.com. Mientras
-no haya nada que la use, esa cuenta es una credencial activa sin
-dueño: conviene borrarla (ver punto 5).
+Cowork dejara lotes en un buzón que ya NO EXISTE en la app. Es una
+credencial activa sin dueño: hay que borrarla (ver punto 5).
 
 
 ==========================================================
@@ -161,44 +158,39 @@ avisar de que faltan las reglas.
 
 
 ==========================================================
-5. EL BUZÓN NO TIENE QUIEN LO LLENE
+5. EL BUZÓN, RETIRADO
 ==========================================================
 
-Este punto describía cómo el asistente de Cowork dejaría lotes en
-/inbox por la API REST. NO FUNCIONA, y conviene saber por qué antes de
-volver a intentarlo.
+Este punto describía cómo el asistente de Cowork dejaría lotes de
+recetas en /inbox por la API REST. No funcionaba y el buzón se ha
+quitado de la app.
 
-Comprobado el 13/09/2026: el entorno donde corre ese asistente sale a
-internet por un proxy que deniega por política de la organización
-firestore.googleapis.com, identitytoolkit.googleapis.com y hasta el
-propio dominio de Netlify. Devuelve 403 al conectar. No es cuestión de
-permisos de Firebase ni de credenciales: la petición no sale de allí.
-Y aparte, un asistente de chat no debe manejar contraseñas.
+POR QUÉ NO FUNCIONABA
+  Comprobado el 13/09/2026: el entorno donde corre ese asistente sale
+  a internet por un proxy que deniega por política de la organización
+  firestore.googleapis.com, identitytoolkit.googleapis.com y hasta el
+  propio dominio de Netlify. Devuelve 403 al conectar. No era cuestión
+  de permisos de Firebase ni de credenciales: la petición no salía de
+  allí. Y aparte, un asistente de chat no debe manejar contraseñas.
 
-QUÉ HACER CON LA CUENTA DEL ASISTENTE
-  Borrarla, mientras no haya nada que la use:
+QUÉ HAY QUE HACER
+  Borrar la cuenta del asistente, que ya no la usa nadie:
     Consola → Authentication → Users → la cuenta del asistente
       → los tres puntos → Eliminar usuario
 
-  No hace falta tocar las reglas. `esElAsistente()` compara contra un
-  identificador concreto y Firebase no reutiliza identificadores, así
-  que al borrar la cuenta el buzón se cierra solo. Falla cerrado, que
-  es como debe fallar.
+  Las reglas publicadas pueden quedarse como están. El bloque de
+  /inbox seguirá ahí sin que nadie lo use, y al borrar la cuenta nadie
+  puede escribir en él: `esElAsistente()` compara contra un
+  identificador concreto y Firebase no los reutiliza. Falla cerrado.
 
-CÓMO ENTRAN LAS RECETAS MIENTRAS TANTO
-  Por la pantalla Importar, que acepta una lista de recetas desde la
-  fase 1. Se puede abrir la app en el navegador del ordenador, que es
-  más cómodo para pegar un JSON largo que el móvil.
+  Si algún día se quiere limpiar del todo, basta con quitar de las
+  reglas el bloque `match /inbox/{loteId}` y la función
+  `esElAsistente()`. No corre prisa.
 
-SI ALGÚN DÍA SE QUIERE LLENAR EL BUZÓN SOLO
-  Hace falta que lo llene algo con red de verdad: Claude Code en el
-  ordenador de Juan, con un script que lea las credenciales de un
-  .env local fuera de git. Hay que sopesar si compensa: obliga a
-  recrear la cuenta, a guardar una contraseña en el disco y a pasar
-  por el ordenador, para acabar aprobando igualmente en el móvil.
-  Si lo único que se busca es revisar receta a receta antes de que
-  entren, sale más barato llevar esa revisión a la pantalla Importar,
-  que ya tiene la validación y no necesita credenciales de nada.
+CÓMO ENTRAN LAS RECETAS
+  Por la pantalla Importar, que acepta una lista de recetas. Se puede
+  abrir la app en el navegador del ordenador, más cómodo para pegar un
+  JSON largo que el móvil.
 
 
 ==========================================================
@@ -222,6 +214,5 @@ service cloud.firestore {
     match /menus/{weekId}          { allow read, write: if request.auth != null; }
     match /shopping-lists/{listId} { allow read, write: if request.auth != null; }
     match /recipes/{recipeId}      { allow read, write: if request.auth != null; }
-    match /inbox/{loteId}          { allow read, write: if request.auth != null; }
   }
 }

@@ -1,8 +1,8 @@
 /* ============================================================
    IMPORTAR RECETAS AL RECETARIO
 
-   Valida un JSON —pegado a mano en «Importar» o dejado por el
-   asistente en el buzón— y lo deja listo para `bulkSaveRecipes`.
+   Valida el JSON que se pega en «Importar» y lo deja listo para
+   `bulkSaveRecipes`.
 
    Dos reglas que mandan sobre todo lo demás:
 
@@ -25,10 +25,6 @@ import { normalize } from './ingredients'
 import { asLines } from './format'
 
 export const TIPOS_VALIDOS = ['comida', 'cena']
-
-/* Un documento de Firestore son 1 MiB: el buzón parte los envíos
-   en lotes de como mucho esto. */
-export const MAX_RECETAS_POR_LOTE = 50
 
 const CATEGORIAS_VALIDAS = new Set([...DISH_CATEGORIES.map((c) => c.key), 'otro'])
 
@@ -97,11 +93,11 @@ function cuerpoDeReceta(cruda) {
 /**
  * @param json            lo que se ha pegado, ya parseado
  * @param recetasActuales el recetario, para detectar nombres repetidos
- * @param opciones        { maxRecipes } límite opcional (lo usa el buzón)
+ * @param opciones        { ahora } fecha de alta de las nuevas
  * @returns { ok, recipes, errors, nuevas, colisiones }
  */
 export function parseRecipesPayload(json, recetasActuales = [], opciones = {}) {
-  const { maxRecipes = null } = opciones
+  const { ahora = new Date().toISOString() } = opciones
   const vacio = { ok: false, recipes: [], errors: [], nuevas: 0, colisiones: [] }
 
   const tipo = detectPayload(json)
@@ -127,17 +123,6 @@ export function parseRecipesPayload(json, recetasActuales = [], opciones = {}) {
   const crudas = listaDeRecetas(json)
   if (!crudas.length) {
     return { ...vacio, errors: [{ etiqueta: 'El JSON', problema: 'no trae ninguna receta' }] }
-  }
-  if (maxRecipes && crudas.length > maxRecipes) {
-    return {
-      ...vacio,
-      errors: [
-        {
-          etiqueta: 'El lote',
-          problema: `trae ${crudas.length} recetas y el máximo son ${maxRecipes}`,
-        },
-      ],
-    }
   }
 
   const porNombre = new Map(
@@ -210,6 +195,10 @@ export function parseRecipesPayload(json, recetasActuales = [], opciones = {}) {
     if (existente) {
       receta.id = existente.id
       colisiones.push(name)
+    } else {
+      /* Fecha de alta, para poder enseñarlas como nuevas durante unos
+         días. Solo en las que se crean: fusionar no las rejuvenece. */
+      receta.createdAt = ahora
     }
 
     recipes.push(receta)

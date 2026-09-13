@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  detectPayload,
-  parseRecipesPayload,
-  TIPOS_VALIDOS,
-  MAX_RECETAS_POR_LOTE,
-} from './recipesImport'
+import { detectPayload, parseRecipesPayload, TIPOS_VALIDOS } from './recipesImport'
 import { asLines } from './format'
 
 const frittata = {
@@ -115,17 +110,7 @@ describe('parseRecipesPayload · validación', () => {
     expect(r.errors[0].problema).toContain('repetida dentro del propio lote')
   })
 
-  it('respeta el límite de recetas cuando se le pide', () => {
-    const muchas = Array.from({ length: MAX_RECETAS_POR_LOTE + 1 }, (_, i) => ({
-      name: `Plato ${i}`,
-      type: 'comida',
-    }))
-    const r = parseRecipesPayload(muchas, [], { maxRecipes: MAX_RECETAS_POR_LOTE })
-    expect(r.ok).toBe(false)
-    expect(r.errors[0].problema).toContain('máximo son 50')
-  })
-
-  it('sin límite explícito no corta el lote', () => {
+  it('no corta los lotes largos', () => {
     const muchas = Array.from({ length: 60 }, (_, i) => ({ name: `Plato ${i}`, type: 'comida' }))
     expect(parseRecipesPayload(muchas).ok).toBe(true)
   })
@@ -147,6 +132,13 @@ describe('parseRecipesPayload · relleno de huecos', () => {
   it('respeta la categoría cuando es válida', () => {
     const r = parseRecipesPayload([{ name: 'Cosa rara', type: 'cena', category: 'legumbres' }])
     expect(porNombre(r, 'Cosa rara').category).toBe('legumbres')
+  })
+
+  it('marca la fecha de alta en las nuevas', () => {
+    const r = parseRecipesPayload([{ name: 'Algo', type: 'comida' }], [], {
+      ahora: '2026-09-13T10:00:00.000Z',
+    })
+    expect(porNombre(r, 'Algo').createdAt).toBe('2026-09-13T10:00:00.000Z')
   })
 
   it('pone rating 0 en las nuevas', () => {
@@ -241,6 +233,14 @@ describe('parseRecipesPayload · nombres que ya existen', () => {
       recetario
     )
     expect(r.recipes[0].rating).toBe(-1)
+  })
+
+  it('al fusionar no rejuvenece la receta', () => {
+    // Volver a importar algo que ya está no debe marcarlo como nuevo
+    const r = parseRecipesPayload([{ name: 'Frittata de pollo', type: 'comida' }], recetario, {
+      ahora: '2026-09-13T10:00:00.000Z',
+    })
+    expect(r.recipes[0]).not.toHaveProperty('createdAt')
   })
 
   it('al fusionar no borra los campos que el JSON no trae', () => {

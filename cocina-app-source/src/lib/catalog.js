@@ -167,6 +167,26 @@ export function freshnessTone(daysAgo) {
   return 'old'
 }
 
+/* ============================================================
+   RECETAS RECIÉN AÑADIDAS
+
+   `createdAt` lo ponen los sitios que crean recetas: el editor a
+   mano, la importación y el completado del recetario. Al fusionar
+   una que ya existe NO se toca, así que reimportar algo viejo no lo
+   hace volver a parecer nuevo.
+
+   Las recetas de antes de esto no lo tienen y simplemente no salen
+   como nuevas, que es lo correcto.
+   ============================================================ */
+
+export const DIAS_NUEVA = 7
+
+export function isNewRecipe(recipe, dias = DIAS_NUEVA, ahora = Date.now()) {
+  const t = Date.parse(recipe?.createdAt || '')
+  if (Number.isNaN(t)) return false
+  return ahora - t < dias * 86400000
+}
+
 /* ---------- ORDENACIONES ---------- */
 export const SORT_MODES = [
   { key: 'sugerido', label: 'Sugerido' },
@@ -175,6 +195,7 @@ export const SORT_MODES = [
   { key: 'frecuente', label: 'Más cocinado' },
   { key: 'raro', label: 'Menos cocinado' },
   { key: 'ranking', label: 'Mejor valorado' },
+  { key: 'nuevas', label: 'Recién añadidas' },
   { key: 'alfabetico', label: 'A – Z' },
   { key: 'kcal_asc', label: 'Menos calorías' },
   { key: 'kcal_desc', label: 'Más calorías' },
@@ -215,6 +236,13 @@ export function sortRecipes(list, mode, stats) {
       return arr.sort((a, b) => s(a).count - s(b).count || az(a, b))
     case 'ranking':
       return arr.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || az(a, b))
+    case 'nuevas':
+      return arr.sort((a, b) => {
+        // Sin fecha de alta van al final, no delante
+        const ta = Date.parse(a.createdAt || '') || -Infinity
+        const tb = Date.parse(b.createdAt || '') || -Infinity
+        return tb - ta || az(a, b)
+      })
     case 'alfabetico':
       return arr.sort(az)
     case 'kcal_asc':

@@ -26,6 +26,8 @@ import {
   guessCategory,
   mealToRecipe,
   hasRecipeBody,
+  isNewRecipe,
+  DIAS_NUEVA,
   menuReferences,
   isRecipeUsed,
 } from '../lib/catalog'
@@ -37,6 +39,7 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
   const [type, setType] = useState('todos')
   const [category, setCategory] = useState('todas')
   const [soloSinReceta, setSoloSinReceta] = useState(false)
+  const [soloNuevas, setSoloNuevas] = useState(false)
   const [sort, setSort] = useState('sugerido')
   const [detail, setDetail] = useState(null)
   const [editing, setEditing] = useState(null) // 'new' | recipe
@@ -54,20 +57,24 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
   const referencias = useMemo(() => menuReferences(menus), [menus])
   const conReceta = useMemo(() => recipes.filter(hasRecipeBody).length, [recipes])
   const sinReceta = recipes.length - conReceta
+  const nuevas = useMemo(() => recipes.filter((r) => isNewRecipe(r)).length, [recipes])
 
   const list = useMemo(() => {
     let l = recipes
     if (type !== 'todos') l = l.filter((r) => (r.type || 'comida') === type)
     if (category !== 'todas') l = l.filter((r) => (r.category || guessCategory(r.name)) === category)
     if (soloSinReceta) l = l.filter((r) => !hasRecipeBody(r))
+    if (soloNuevas) l = l.filter((r) => isNewRecipe(r))
     if (search.trim()) {
       const q = normalize(search)
       l = l.filter(
         (r) => normalize(r.name).includes(q) || normalize(formatProteins(r.proteins)).includes(q)
       )
     }
-    return sortRecipes(l, sort, stats)
-  }, [recipes, type, category, soloSinReceta, search, sort, stats])
+    // Al filtrar por nuevas, lo natural es verlas de más reciente a
+    // más antigua, salvo que se haya elegido otro orden a propósito
+    return sortRecipes(l, soloNuevas && sort === 'sugerido' ? 'nuevas' : sort, stats)
+  }, [recipes, type, category, soloSinReceta, soloNuevas, search, sort, stats])
 
   /* ============================================================
      COMPLETAR EL RECETARIO
@@ -101,7 +108,7 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
           omitidos++
           continue
         }
-        toSave.push(seed)
+        toSave.push({ ...seed, createdAt: new Date().toISOString() })
         delRepertorio++
         byName.set(normalize(seed.name), seed)
       }
@@ -121,7 +128,7 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
               'r-' +
               (key.replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 52) ||
                 Math.random().toString(36).slice(2, 8))
-            const withId = { ...r, id: safeId }
+            const withId = { ...r, id: safeId, createdAt: new Date().toISOString() }
             toSave.push(withId)
             deMisMenus++
             byName.set(key, withId)
@@ -237,15 +244,26 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
           </div>
         </div>
 
-        <button
-          onClick={() => setSoloSinReceta((v) => !v)}
-          className="text-sm text-ink-500 mb-4 text-left"
-        >
+        <p className="text-sm text-ink-500 mb-4">
           {recipes.length} platos · {conReceta} con receta ·{' '}
-          <span className={soloSinReceta ? 'text-terracotta-600 font-semibold' : 'underline'}>
+          <button
+            onClick={() => setSoloSinReceta((v) => !v)}
+            className={soloSinReceta ? 'text-terracotta-600 font-semibold' : 'underline'}
+          >
             {sinReceta} sin receta
-          </span>
-        </button>
+          </button>
+          {nuevas > 0 && (
+            <>
+              {' · '}
+              <button
+                onClick={() => setSoloNuevas((v) => !v)}
+                className={soloNuevas ? 'text-teal-700 font-semibold' : 'underline'}
+              >
+                {nuevas} {nuevas === 1 ? 'nueva' : 'nuevas'}
+              </button>
+            </>
+          )}
+        </p>
 
         {!enSeleccion && (
           <>
@@ -282,6 +300,9 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
                 {t.icon} {t.label}s
               </Chip>
             ))}
+            <Chip active={soloNuevas} onClick={() => setSoloNuevas((v) => !v)} tone="teal">
+              ✨ Nuevas
+            </Chip>
             <Chip active={soloSinReceta} onClick={() => setSoloSinReceta((v) => !v)}>
               📄 Sin receta
             </Chip>
@@ -318,9 +339,11 @@ export default function CatalogView({ recipes, loading, menus, stats }) {
           <EmptyState
             title={recipes.length ? 'Sin resultados' : 'Recetario vacío'}
             hint={
-              recipes.length
-                ? 'Prueba con otro filtro.'
-                : 'Pulsa «Completar el recetario» para cargar el repertorio de golpe.'
+              soloNuevas
+                ? `Aquí salen las que se han añadido en los últimos ${DIAS_NUEVA} días.`
+                : recipes.length
+                  ? 'Prueba con otro filtro.'
+                  : 'Pulsa «Completar el recetario» para cargar el repertorio de golpe.'
             }
           />
         ) : (
