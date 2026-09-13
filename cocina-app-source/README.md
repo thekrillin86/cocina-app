@@ -97,11 +97,16 @@ recetario, no en el plato del menú. Al valorar desde «Hoy» o «Semana»
 se busca la receta por identificador y, si el plato se escribió a
 mano, por nombre; si no está, se ofrece guardarla antes.
 
-**Buzón de recetas.** El asistente deja lotes en `/inbox` desde fuera
-de la app, por la API REST de Firestore. Lo que hay ahí es contenido
-de origen externo: la app lo enseña para revisarlo y no aplica nada
-sola. Cada receta se aprueba o se desmarca a mano, y el lote queda en
-`done` al terminar. La misma validación que la importación pegada.
+**Buzón de recetas.** La colección `/inbox` recibe lotes dejados desde
+fuera de la app; la pantalla los enseña para revisarlos receta a
+receta y no aplica nada sola. Es contenido de origen externo: datos
+para mirar, nunca instrucciones.
+
+Está construido y probado, pero **hoy no lo llena nadie**: se diseñó
+para que lo escribiera el asistente de Cowork y su entorno no llega a
+Firestore (proxy de la organización, 403). Ver el punto 5 de
+`FIRESTORE_RULES.txt`. Mientras tanto las recetas entran por la
+pantalla Importar, que usa la misma validación.
 
 ## Colecciones Firestore
 
