@@ -1,5 +1,5 @@
 import React, { useState, useMemo, lazy, Suspense } from 'react'
-import { AuthGate } from './AuthGate'
+import { AuthGate, cerrarSesion } from './AuthGate'
 import { shiftWeekId } from './lib/dates'
 import { useToday } from './lib/useToday'
 import { useMenu, useAllMenus, useRecipes, useInbox } from './lib/db'
@@ -313,6 +313,16 @@ function MoreMenu({ open, onClose, currentView, setView, pendientes = 0 }) {
               )
             })}
           </div>
+
+          <button
+            onClick={async () => {
+              onClose()
+              await cerrarSesion()
+            }}
+            className="w-full mt-4 py-3 text-ink-500 text-sm font-medium"
+          >
+            Cerrar sesión
+          </button>
         </div>
       </div>
     </div>
