@@ -6,10 +6,12 @@
      /recipes/{id}         → catálogo de recetas (comidas y cenas)
      /shopping-lists/{id}  → listas de la compra
 
-   Las listas de la compra guardan sus productos en un array dentro
-   del documento. Para que dos móviles puedan marcar cosas a la vez
-   en el supermercado sin pisarse, todas las modificaciones pasan por
-   una transacción que relee el array antes de escribirlo.
+   Las listas de la compra guardan sus productos en un mapa dentro
+   del documento, y cada cambio escribe solo su campo. Eso es lo que
+   permite marcar productos sin cobertura —la escritura se apunta en
+   el móvil y se ve al instante— y a la vez que dos móviles no se
+   pisen, porque tocan campos distintos y Firestore los combina.
+   Ver `shoppingList.js` para el porqué en detalle.
    ============================================================ */
 import { useState, useEffect } from 'react'
 import {
@@ -20,12 +22,13 @@ import {
   deleteDoc,
   onSnapshot,
   query,
-  runTransaction,
+  deleteField,
   writeBatch,
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import { weekId } from './dates'
 import { mergeShoppingItems } from './ingredients'
+import { asItems, isItemMap, itemsToMap, newItemId, findItem } from './shoppingList'
 
 const ahora = () => new Date().toISOString()
 
@@ -103,17 +106,31 @@ export async function deleteMenu(wid) {
    LISTAS DE LA COMPRA
    ============================================================ */
 
+/* Además de las listas, devuelve cómo va la sincronización:
+
+     sinConexion — lo que se ve sale de la caché del móvil, no del
+                   servidor. Se sigue pudiendo marcar y añadir.
+     porSubir    — hay cambios hechos aquí que todavía no han subido.
+
+   Firestore lo cuenta en los metadatos de cada snapshot, pero solo
+   los manda si se piden con `includeMetadataChanges`. */
 export function useShoppingLists() {
   const [lists, setLists] = useState([])
   const [loading, setLoading] = useState(true)
+  const [sync, setSync] = useState({ sinConexion: false, porSubir: false })
 
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, 'shopping-lists')),
+      { includeMetadataChanges: true },
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
         list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'))
         setLists(list)
+        setSync({
+          sinConexion: snap.metadata.fromCache,
+          porSubir: snap.metadata.hasPendingWrites,
+        })
         setLoading(false)
       },
       (err) => {
@@ -124,11 +141,7 @@ export function useShoppingLists() {
     return unsub
   }, [])
 
-  return { lists, loading }
-}
-
-export function newItemId() {
-  return 'it_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6)
+  return { lists, loading, sync }
 }
 
 export async function createShoppingList(name) {
@@ -137,7 +150,7 @@ export async function createShoppingList(name) {
       .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'lista-' + Date.now()
   await setDoc(doc(db, 'shopping-lists', id), {
     name,
-    items: [],
+    items: {},
     createdAt: ahora(),
   })
   return id
@@ -151,60 +164,90 @@ export async function deleteShoppingList(listId) {
   await deleteDoc(doc(db, 'shopping-lists', listId))
 }
 
-/* Relee los productos dentro de la transacción y aplica `transformar`.
-   Si dos móviles escriben a la vez, Firestore reintenta en lugar de
-   dejar que uno sobrescriba al otro. */
-async function actualizarItems(listId, transformar) {
-  const ref = doc(db, 'shopping-lists', listId)
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref)
-    if (!snap.exists()) throw new Error('Esa lista ya no existe')
-    const items = snap.data().items || []
-    tx.update(ref, { items: transformar(items), updatedAt: ahora() })
+/* ============================================================
+   CAMBIOS EN LOS PRODUCTOS
+
+   Todas las operaciones reciben la lista tal y como está en
+   pantalla, no solo su identificador: de ahí sale el estado actual
+   de cada producto y si la lista todavía está guardada como array.
+
+   Ninguna usa transacciones a propósito. Son escrituras normales,
+   que Firestore apunta primero en el móvil: la casilla se marca al
+   instante aunque no haya cobertura y sube cuando vuelva la señal.
+   ============================================================ */
+
+const refLista = (list) => doc(db, 'shopping-lists', list.id)
+
+/* Las listas de antes guardaban los productos como array, y sobre un
+   array no se puede escribir un campo suelto. La primera vez que se
+   toca una, se convierte a mapa. Pasa una sola vez por lista y la
+   conversión es la misma se haga desde el móvil que se haga, así que
+   no importa si los dos la convierten a la vez. */
+async function asegurarMapa(list) {
+  if (isItemMap(list)) return
+  await updateDoc(refLista(list), { items: itemsToMap(asItems(list)) })
+}
+
+async function escribirCampos(list, campos) {
+  await asegurarMapa(list)
+  await updateDoc(refLista(list), { ...campos, updatedAt: ahora() })
+}
+
+export async function addShoppingItem(list, item) {
+  const id = item.id || newItemId()
+  await escribirCampos(list, {
+    [`items.${id}`]: { id, checked: false, quantity: null, recipes: [], ...item },
   })
+  return id
 }
 
-export async function addShoppingItem(listId, item) {
-  await actualizarItems(listId, (items) => [
-    ...items,
-    { id: newItemId(), checked: false, quantity: null, recipes: [], ...item },
-  ])
+export async function updateShoppingItem(list, itemId, cambios) {
+  const campos = {}
+  for (const [clave, valor] of Object.entries(cambios)) {
+    campos[`items.${itemId}.${clave}`] = valor
+  }
+  await escribirCampos(list, campos)
 }
 
-export async function updateShoppingItem(listId, itemId, cambios) {
-  await actualizarItems(listId, (items) =>
-    items.map((it) => (it.id === itemId ? { ...it, ...cambios } : it))
-  )
+/* El estado nuevo sale del que hay en pantalla, que con la caché
+   local es el bueno aunque no haya cobertura. */
+export async function toggleShoppingItem(list, itemId) {
+  const item = findItem(list, itemId)
+  if (!item) return
+  await escribirCampos(list, { [`items.${itemId}.checked`]: !item.checked })
 }
 
-export async function toggleShoppingItem(listId, itemId) {
-  await actualizarItems(listId, (items) =>
-    items.map((it) => (it.id === itemId ? { ...it, checked: !it.checked } : it))
-  )
+export async function removeShoppingItem(list, itemId) {
+  await escribirCampos(list, { [`items.${itemId}`]: deleteField() })
 }
 
-export async function removeShoppingItem(listId, itemId) {
-  await actualizarItems(listId, (items) => items.filter((it) => it.id !== itemId))
+export async function clearCheckedItems(list) {
+  const campos = {}
+  for (const it of asItems(list)) {
+    if (it.checked) campos[`items.${it.id}`] = deleteField()
+  }
+  if (!Object.keys(campos).length) return 0
+  await escribirCampos(list, campos)
+  return Object.keys(campos).length
 }
 
-export async function clearCheckedItems(listId) {
-  await actualizarItems(listId, (items) => items.filter((it) => !it.checked))
-}
-
-export async function clearAllItems(listId) {
-  await actualizarItems(listId, () => [])
+export async function clearAllItems(list) {
+  await updateDoc(refLista(list), { items: {}, updatedAt: ahora() })
 }
 
 /* Vuelca los ingredientes de una semana en la lista.
-   `modo`: 'merge' añade sin duplicar, 'replace' sustituye la lista. */
-export async function importWeekIntoList(listId, entrantes, modo = 'merge') {
-  let total = 0
-  await actualizarItems(listId, (items) => {
-    const siguiente = modo === 'replace' ? entrantes : mergeShoppingItems(items, entrantes)
-    total = siguiente.length
-    return siguiente
+   `modo`: 'merge' añade sin duplicar, 'replace' sustituye la lista.
+
+   Esto sí reescribe los productos enteros, pero es una acción
+   deliberada que se hace en casa antes de salir, no en mitad del
+   pasillo, y `mergeShoppingItems` es idempotente. */
+export async function importWeekIntoList(list, entrantes, modo = 'merge') {
+  const siguientes = modo === 'replace' ? entrantes : mergeShoppingItems(asItems(list), entrantes)
+  await updateDoc(refLista(list), {
+    items: itemsToMap(siguientes),
+    updatedAt: ahora(),
   })
-  return total
+  return siguientes.length
 }
 
 /* ============================================================

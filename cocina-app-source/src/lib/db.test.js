@@ -1,19 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-/* Los lotes que se han ido enviando: cada entrada es un commit */
+/* Lo que se ha ido enviando a Firestore */
 const lotesEnviados = []
+const escrituras = []
+
+const BORRA_CAMPO = { __borrar: true }
 
 vi.mock('../firebase', () => ({ db: {}, auth: {} }))
 
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(),
   doc: (_db, coleccion, id) => ({ coleccion, id }),
-  setDoc: vi.fn(),
-  updateDoc: vi.fn(),
+  setDoc: (ref, datos) => {
+    escrituras.push({ op: 'set', ref, datos })
+    return Promise.resolve()
+  },
+  updateDoc: (ref, datos) => {
+    escrituras.push({ op: 'update', ref, datos })
+    return Promise.resolve()
+  },
   deleteDoc: vi.fn(),
+  deleteField: () => BORRA_CAMPO,
   onSnapshot: vi.fn(),
   query: vi.fn(),
-  runTransaction: vi.fn(),
   writeBatch: () => {
     const operaciones = []
     return {
@@ -26,10 +35,158 @@ vi.mock('firebase/firestore', () => ({
   },
 }))
 
-const { bulkDeleteRecipes, bulkSaveRecipes, newRecipeId } = await import('./db')
+const {
+  bulkDeleteRecipes,
+  bulkSaveRecipes,
+  newRecipeId,
+  addShoppingItem,
+  updateShoppingItem,
+  toggleShoppingItem,
+  removeShoppingItem,
+  clearCheckedItems,
+  clearAllItems,
+  importWeekIntoList,
+} = await import('./db')
 
 beforeEach(() => {
   lotesEnviados.length = 0
+  escrituras.length = 0
+})
+
+/* Una lista ya en el formato nuevo */
+const listaMapa = {
+  id: 'lidl',
+  name: 'Lidl',
+  items: {
+    it_1: { id: 'it_1', name: 'Leche', checked: false },
+    it_2: { id: 'it_2', name: 'Pan', checked: true },
+  },
+}
+
+/* Una de las de antes, todavía como array */
+const listaArray = {
+  id: 'lidl',
+  name: 'Lidl',
+  items: [
+    { id: 'it_1', name: 'Leche', checked: false },
+    { id: 'it_2', name: 'Pan', checked: true },
+  ],
+}
+
+const soloCampos = (datos) => {
+  const { updatedAt, ...resto } = datos
+  return resto
+}
+
+describe('lista de la compra · escribe por campo, no la lista entera', () => {
+  /* Esto es lo que hace que funcione sin cobertura. Una escritura de
+     campo se apunta en el móvil y se ve al instante; reescribir los
+     productos enteros obligaba a una transacción, y las transacciones
+     de Firestore van directas al servidor. */
+
+  it('marcar un producto escribe solo su casilla', async () => {
+    await toggleShoppingItem(listaMapa, 'it_1')
+    expect(escrituras).toHaveLength(1)
+    expect(soloCampos(escrituras[0].datos)).toEqual({ 'items.it_1.checked': true })
+  })
+
+  it('desmarcar también, mirando el estado que hay', async () => {
+    await toggleShoppingItem(listaMapa, 'it_2')
+    expect(soloCampos(escrituras[0].datos)).toEqual({ 'items.it_2.checked': false })
+  })
+
+  it('marcar un producto que ya no está no escribe nada', async () => {
+    await toggleShoppingItem(listaMapa, 'it_borrado')
+    expect(escrituras).toHaveLength(0)
+  })
+
+  it('editar escribe solo los campos que cambian', async () => {
+    await updateShoppingItem(listaMapa, 'it_1', { name: 'Leche entera', quantity: '2 l' })
+    expect(soloCampos(escrituras[0].datos)).toEqual({
+      'items.it_1.name': 'Leche entera',
+      'items.it_1.quantity': '2 l',
+    })
+  })
+
+  it('añadir escribe solo el producto nuevo', async () => {
+    const id = await addShoppingItem(listaMapa, { name: 'Sal', category: 'despensa' })
+    const campos = soloCampos(escrituras[0].datos)
+    expect(Object.keys(campos)).toEqual([`items.${id}`])
+    expect(campos[`items.${id}`]).toMatchObject({ id, name: 'Sal', checked: false })
+  })
+
+  it('borrar un producto borra solo su campo', async () => {
+    await removeShoppingItem(listaMapa, 'it_1')
+    expect(soloCampos(escrituras[0].datos)).toEqual({ 'items.it_1': BORRA_CAMPO })
+  })
+
+  it('borrar los comprados borra solo esos campos', async () => {
+    const cuantos = await clearCheckedItems(listaMapa)
+    expect(cuantos).toBe(1)
+    expect(soloCampos(escrituras[0].datos)).toEqual({ 'items.it_2': BORRA_CAMPO })
+  })
+
+  it('si no hay comprados no escribe nada', async () => {
+    const lista = { id: 'x', items: { a: { id: 'a', checked: false } } }
+    expect(await clearCheckedItems(lista)).toBe(0)
+    expect(escrituras).toHaveLength(0)
+  })
+
+  it('ninguna operación toca los demás productos', async () => {
+    await toggleShoppingItem(listaMapa, 'it_1')
+    const datos = escrituras[0].datos
+    expect(JSON.stringify(datos)).not.toContain('Pan')
+    expect(datos).not.toHaveProperty('items')
+  })
+})
+
+describe('lista de la compra · listas de antes, guardadas como array', () => {
+  it('se convierten a mapa antes de escribir el campo', async () => {
+    await toggleShoppingItem(listaArray, 'it_1')
+
+    expect(escrituras).toHaveLength(2)
+    // Primero la conversión entera
+    expect(escrituras[0].datos).toEqual({
+      items: {
+        it_1: { id: 'it_1', name: 'Leche', checked: false },
+        it_2: { id: 'it_2', name: 'Pan', checked: true },
+      },
+    })
+    // Y encima, el cambio por campo
+    expect(soloCampos(escrituras[1].datos)).toEqual({ 'items.it_1.checked': true })
+  })
+
+  it('una vez convertida ya no se vuelve a convertir', async () => {
+    await toggleShoppingItem(listaMapa, 'it_1')
+    expect(escrituras).toHaveLength(1)
+  })
+
+  it('la conversión no pierde ningún producto', async () => {
+    await removeShoppingItem(listaArray, 'it_1')
+    expect(Object.keys(escrituras[0].datos.items)).toEqual(['it_1', 'it_2'])
+  })
+})
+
+describe('lista de la compra · operaciones en bloque', () => {
+  it('vaciar deja los productos a cero', async () => {
+    await clearAllItems(listaMapa)
+    expect(escrituras[0].datos.items).toEqual({})
+  })
+
+  it('importar del menú escribe los productos como mapa', async () => {
+    const entrantes = [
+      { id: 'auto_leche', name: 'Leche', quantity: '1 l', checked: false, recipes: [] },
+    ]
+    await importWeekIntoList({ id: 'lidl', items: {} }, entrantes, 'replace')
+    expect(escrituras[0].datos.items).toEqual({ auto_leche: entrantes[0] })
+  })
+
+  it('importar añadiendo conserva lo que ya había', async () => {
+    const entrantes = [{ id: 'auto_sal', name: 'Sal', checked: false, recipes: [] }]
+    await importWeekIntoList(listaMapa, entrantes, 'merge')
+    const claves = Object.keys(escrituras[0].datos.items).sort()
+    expect(claves).toEqual(['auto_sal', 'it_1', 'it_2'])
+  })
 })
 
 describe('bulkDeleteRecipes', () => {

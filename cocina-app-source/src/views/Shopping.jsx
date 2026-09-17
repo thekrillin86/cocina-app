@@ -18,6 +18,7 @@ import {
   firstNeededIndex,
 } from '../lib/ingredients'
 import { withLiveRecipes } from '../lib/catalog'
+import { asItems, countPending } from '../lib/shoppingList'
 import {
   useShoppingLists,
   createShoppingList,
@@ -48,7 +49,7 @@ export default function ShoppingView({
   autoWeek,
   onAutoWeekUsed,
 }) {
-  const { lists, loading } = useShoppingLists()
+  const { lists, loading, sync } = useShoppingLists()
   const [activeId, setActiveId] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [showNewList, setShowNewList] = useState(false)
@@ -84,7 +85,7 @@ export default function ShoppingView({
   if (loading) return <Loading />
 
   const list = lists.find((l) => l.id === activeId)
-  const editingItem = list ? (list.items || []).find((it) => it.id === editingId) : null
+  const editingItem = list ? asItems(list).find((it) => it.id === editingId) : null
 
   return (
     <div className="animate-fade-in-up">
@@ -116,10 +117,12 @@ export default function ShoppingView({
               {lists.map((l) => (
                 <Chip key={l.id} active={l.id === activeId} onClick={() => setActiveId(l.id)}>
                   {l.name}
-                  {l.items?.length ? ` · ${l.items.filter((i) => !i.checked).length}` : ''}
+                  {countPending(l) ? ` · ${countPending(l)}` : ''}
                 </Chip>
               ))}
             </div>
+
+            <AvisoConexion sync={sync} />
 
             {list && (
               <ListContent
@@ -189,7 +192,7 @@ export default function ShoppingView({
    CONTENIDO DE UNA LISTA
    ============================================================ */
 function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
-  const items = list.items || []
+  const items = asItems(list)
   const confirmar = useConfirm()
   const avisar = useToast()
 
@@ -235,7 +238,7 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
       danger: true,
     })
     if (!ok) return
-    await conAviso(() => clearCheckedItems(list.id), 'No se han podido borrar')
+    await conAviso(() => clearCheckedItems(list), 'No se han podido borrar')
   }
 
   async function vaciarTodo() {
@@ -246,7 +249,7 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
       danger: true,
     })
     if (!ok) return
-    await conAviso(() => clearAllItems(list.id), 'No se ha podido vaciar')
+    await conAviso(() => clearAllItems(list), 'No se ha podido vaciar')
   }
 
   return (
@@ -304,10 +307,10 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
                       key={it.id}
                       item={it}
                       onToggle={() =>
-                        conAviso(() => toggleShoppingItem(list.id, it.id), 'No se ha podido marcar')
+                        conAviso(() => toggleShoppingItem(list, it.id), 'No se ha podido marcar')
                       }
                       onDelete={() =>
-                        conAviso(() => removeShoppingItem(list.id, it.id), 'No se ha podido borrar')
+                        conAviso(() => removeShoppingItem(list, it.id), 'No se ha podido borrar')
                       }
                       onEdit={() => onEdit(it)}
                     />
@@ -326,10 +329,10 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
                     key={it.id}
                     item={it}
                     onToggle={() =>
-                      conAviso(() => toggleShoppingItem(list.id, it.id), 'No se ha podido marcar')
+                      conAviso(() => toggleShoppingItem(list, it.id), 'No se ha podido marcar')
                     }
                     onDelete={() =>
-                      conAviso(() => removeShoppingItem(list.id, it.id), 'No se ha podido borrar')
+                      conAviso(() => removeShoppingItem(list, it.id), 'No se ha podido borrar')
                     }
                     onEdit={() => onEdit(it)}
                   />
@@ -347,6 +350,32 @@ function ListContent({ list, onShowAdd, onShowImport, onEdit, onManage }) {
         </div>
       )}
     </>
+  )
+}
+
+/* ============================================================
+   CÓMO VA LA SINCRONIZACIÓN
+
+   Dentro de un supermercado la cobertura va y viene. Lo que se marca
+   se guarda igual —en el móvil primero y en el servidor cuando haya
+   señal—, pero conviene decirlo para poder marcar con tranquilidad
+   en vez de dudar y cerrar la app.
+   ============================================================ */
+function AvisoConexion({ sync }) {
+  if (!sync || (!sync.sinConexion && !sync.porSubir)) return null
+
+  const sinConexion = sync.sinConexion
+  return (
+    <div
+      role="status"
+      className={`mb-4 px-4 py-2.5 rounded-2xl text-xs font-medium ${
+        sinConexion ? 'bg-cream-200 text-ink-700' : 'bg-teal-50 text-teal-700'
+      }`}
+    >
+      {sinConexion
+        ? '📴 Sin conexión · marca tranquilo, se guarda en el móvil y sube al volver la señal'
+        : '↑ Guardando los últimos cambios…'}
+    </div>
   )
 }
 
@@ -581,8 +610,8 @@ export function ItemModal({ list, item, onClose }) {
         category,
         quantity: quantity.trim() || null,
       }
-      if (isNew) await addShoppingItem(list.id, { ...datos, checked: false, recipes: [] })
-      else await updateShoppingItem(list.id, item.id, datos)
+      if (isNew) await addShoppingItem(list, { ...datos, checked: false, recipes: [] })
+      else await updateShoppingItem(list, item.id, datos)
       onClose()
     } catch (e) {
       avisar('No se ha podido guardar: ' + (e?.message || e), 'error')
@@ -601,7 +630,7 @@ export function ItemModal({ list, item, onClose }) {
     if (!ok) return
     setSaving(true)
     try {
-      await removeShoppingItem(list.id, item.id)
+      await removeShoppingItem(list, item.id)
       onClose()
     } catch (e) {
       avisar('No se ha podido eliminar: ' + (e?.message || e), 'error')
@@ -773,14 +802,15 @@ export function ImportMenuModal({
     if (!puedeImportar) return
     setImporting(true)
     try {
-      let listId = destino
+      let destinoLista = listaDestino
       let nombre = listaDestino?.name
       if (creandoLista) {
         nombre = nombreNueva.trim()
-        listId = await createShoppingList(nombre)
+        // Recién creada: todavía no ha llegado por el listener
+        destinoLista = { id: await createShoppingList(nombre), items: {} }
       }
-      await importWeekIntoList(listId, preview, creandoLista ? 'replace' : mode)
-      onImportado?.(listId)
+      await importWeekIntoList(destinoLista, preview, creandoLista ? 'replace' : mode)
+      onImportado?.(destinoLista.id)
       avisar(
         mode === 'replace' && !creandoLista
           ? `${nombre} reemplazada con ${preview.length} productos`

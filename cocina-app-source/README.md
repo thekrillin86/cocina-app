@@ -14,6 +14,7 @@ src/
     dates.js           Semana ISO, fechas reales de cada día
     useToday.js        Fecha de hoy revalidada (la PWA vive días abierta)
     dishes.js          Un hueco puede llevar varios platos
+    shoppingList.js    Forma de los productos de una lista de la compra
     recipesImport.js   Validar las recetas que se pegan en Importar
     format.js          Formato de valores
     ingredients.js     Limpieza, alias, cantidades y categorías de la compra
@@ -42,9 +43,19 @@ derivadas se calculan en UTC anclando en el 4 de enero, que por
 definición cae siempre en la semana 1.
 
 **Escrituras concurrentes.** La app la usan dos móviles a la vez, así
-que cada cambio (asignar un plato, marcar un producto) se hace dentro
-de una transacción que relee el documento. Sin eso, el último en
-guardar borraba el cambio del otro.
+que los cambios del menú se hacen dentro de una transacción que relee
+el documento. Sin eso, el último en guardar borraba el cambio del otro.
+
+**La lista de la compra, no.** Ahí las transacciones estaban
+haciendo daño: no pasan por la caché del móvil, van directas al
+servidor y reintentan, así que dentro de un supermercado sin cobertura
+la lista se quedaba colgada. Los productos se guardan como un mapa por
+identificador y cada cambio escribe un solo campo
+(`items.it_a3f9.checked`). Eso es una escritura normal —se apunta en el
+móvil, se ve al instante y sube al volver la señal— y sigue sin pisar
+al otro móvil, porque cada uno toca campos distintos y Firestore los
+combina. Las listas guardadas como array se leen igual y se convierten
+solas la primera vez que se tocan. Ver `lib/shoppingList.js`.
 
 **Del menú a la compra.** `extractItemsFromMenu` parsea los
 ingredientes de cada receta de la semana: separa cantidad de producto,
