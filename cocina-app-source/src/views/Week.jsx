@@ -18,6 +18,7 @@ import {
   setDaySchedule,
   setWeekPersons,
   copyWeek,
+  getWeek,
   normalizeDays,
   countMeals,
   countDishes,
@@ -64,12 +65,31 @@ export default function WeekView({
     setIndice(null)
   }
 
+  /* Guardar puede fallar —sin cobertura, o si la semana ya no está—
+     y antes fallaba en silencio: la hoja se quedaba abierta y nadie
+     decía nada. */
+  async function guardar(accion, queFallo) {
+    try {
+      await accion()
+      return true
+    } catch (e) {
+      avisar('No se ha podido ' + queFallo + ': ' + (e?.message || e), 'error')
+      return false
+    }
+  }
+
   /* Si el hueco estaba vacio se cierra todo; si ya tenia platos se
      vuelve a la ficha para poder seguir anadiendo o valorando. */
   async function assign(meal) {
     const estabaVacio = platos.length === 0
-    if (indice == null) await addDish(wid, slot.dayIndex, slot.type, meal)
-    else await replaceDish(wid, slot.dayIndex, slot.type, indice, meal)
+    const ok = await guardar(
+      () =>
+        indice == null
+          ? addDish(wid, menu, slot.dayIndex, slot.type, meal)
+          : replaceDish(wid, menu, slot.dayIndex, slot.type, indice, meal),
+      'guardar el plato'
+    )
+    if (!ok) return
     if (estabaVacio) cerrar()
     else {
       setMode('detail')
@@ -83,22 +103,33 @@ export default function WeekView({
     setMode(asDishes(days[dayIndex]?.[type]).length ? 'detail' : 'pick')
   }
 
+  /* Se mira primero qué hay en la semana de origen: preguntar «se
+     reemplazarán N platos» sin saber si hay algo que poner en su
+     sitio es lo que llevó a vaciar una semana entera. */
   async function copiarSemanaAnterior() {
-    const origen = shiftWeekId(wid, -1)
-    if (total > 0) {
-      const ok = await confirmar({
-        title: 'Copiar la semana anterior',
-        message: `Se reemplazarán los ${total} platos que ya hay en la semana ${week}. Esto no se puede deshacer.`,
-        confirmLabel: 'Reemplazar',
-        danger: true,
-      })
-      if (!ok) return
-    }
+    const origenId = shiftWeekId(wid, -1)
     setCopiando(true)
     try {
-      const copiados = await copyWeek(origen, wid)
-      if (copiados > 0) avisar(`${copiados} platos copiados de la semana anterior`, 'ok')
-      else avisar('La semana anterior está vacía, no hay nada que copiar')
+      const origen = await getWeek(origenId)
+      const disponibles = countMeals(origen)
+
+      if (!disponibles) {
+        avisar('La semana anterior está vacía, no hay nada que copiar')
+        return
+      }
+
+      const ok = await confirmar({
+        title: `Copiar ${disponibles} platos`,
+        message: total
+          ? `Se traen los ${disponibles} platos de la semana anterior y se reemplazan los ${total} que hay ahora en la semana ${week}. Esto no se puede deshacer.`
+          : `Se traen los ${disponibles} platos de la semana anterior a la semana ${week}.`,
+        confirmLabel: 'Copiar',
+        danger: total > 0,
+      })
+      if (!ok) return
+
+      const copiados = await copyWeek(origenId, wid)
+      avisar(`${copiados} platos copiados de la semana anterior`, 'ok')
     } catch (e) {
       avisar('No se ha podido copiar: ' + (e?.message || e), 'error')
     } finally {
@@ -203,10 +234,15 @@ export default function WeekView({
             setIndice(i)
             setMode('manual')
           }}
-          onSetNote={(i, note) => setDishNote(wid, slot.dayIndex, slot.type, i, note)}
+          onSetNote={(i, note) =>
+            guardar(() => setDishNote(wid, menu, slot.dayIndex, slot.type, i, note), 'guardar la nota')
+          }
           onRemoveDish={async (i) => {
-            await removeDish(wid, slot.dayIndex, slot.type, i)
-            if (platos.length <= 1) cerrar()
+            const ok = await guardar(
+              () => removeDish(wid, menu, slot.dayIndex, slot.type, i),
+              'quitar el plato'
+            )
+            if (ok && platos.length <= 1) cerrar()
           }}
         />
       )}
@@ -240,8 +276,11 @@ export default function WeekView({
           dayLabel={cap(DAYS_ES[editSchedule.index])}
           onClose={() => setEditSchedule(null)}
           onSave={async (v) => {
-            await setDaySchedule(wid, editSchedule.index, v)
-            setEditSchedule(null)
+            const ok = await guardar(
+              () => setDaySchedule(wid, menu, editSchedule.index, v),
+              'guardar el horario'
+            )
+            if (ok) setEditSchedule(null)
           }}
         />
       )}
@@ -251,8 +290,11 @@ export default function WeekView({
           value={menu?.persons || COMENSALES_POR_DEFECTO}
           onClose={() => setAjustes(false)}
           onSave={async (n) => {
-            await setWeekPersons(wid, n)
-            setAjustes(false)
+            const ok = await guardar(
+              () => setWeekPersons(wid, menu, n),
+              'guardar los comensales'
+            )
+            if (ok) setAjustes(false)
           }}
         />
       )}

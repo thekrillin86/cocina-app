@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Header, Loading, EmptyState } from '../components/ui'
+import { Header, Loading, EmptyState, useToast } from '../components/ui'
 import { MealCard, MealPicker, SlotDetail, ManualMealEditor } from '../components/meals'
 import { formatLongDate, DAYS_ES } from '../lib/dates'
 import { asDishes } from '../lib/dishes'
@@ -9,6 +9,20 @@ export default function TodayView({ menu, loading, wid, today, recipes, stats, o
   const [tipo, setTipo] = useState(null) // 'lunch' | 'dinner'
   const [modo, setModo] = useState(null) // 'detail' | 'pick' | 'manual'
   const [indice, setIndice] = useState(null) // plato a tocar; null = añadir uno nuevo
+  const avisar = useToast()
+
+  /* Guardar puede fallar —sin cobertura, o si la semana ya no está—
+     y antes fallaba en silencio: la hoja se quedaba abierta y nadie
+     decía nada. */
+  async function guardar(accion, queFallo) {
+    try {
+      await accion()
+      return true
+    } catch (e) {
+      avisar('No se ha podido ' + queFallo + ': ' + (e?.message || e), 'error')
+      return false
+    }
+  }
 
   if (loading) return <Loading />
 
@@ -40,8 +54,14 @@ export default function TodayView({ menu, loading, wid, today, recipes, stats, o
      tenía platos se vuelve a la ficha para poder seguir. */
   async function asignar(meal) {
     const estabaVacio = platos.length === 0
-    if (indice == null) await addDish(wid, todayIdx, tipo, meal)
-    else await replaceDish(wid, todayIdx, tipo, indice, meal)
+    const ok = await guardar(
+      () =>
+        indice == null
+          ? addDish(wid, menu, todayIdx, tipo, meal)
+          : replaceDish(wid, menu, todayIdx, tipo, indice, meal),
+      'guardar el plato'
+    )
+    if (!ok) return
     if (estabaVacio) cerrar()
     else {
       setModo('detail')
@@ -120,10 +140,15 @@ export default function TodayView({ menu, loading, wid, today, recipes, stats, o
             setIndice(i)
             setModo('manual')
           }}
-          onSetNote={(i, note) => setDishNote(wid, todayIdx, tipo, i, note)}
+          onSetNote={(i, note) =>
+            guardar(() => setDishNote(wid, menu, todayIdx, tipo, i, note), 'guardar la nota')
+          }
           onRemoveDish={async (i) => {
-            await removeDish(wid, todayIdx, tipo, i)
-            if (platos.length <= 1) cerrar()
+            const ok = await guardar(
+              () => removeDish(wid, menu, todayIdx, tipo, i),
+              'quitar el plato'
+            )
+            if (ok && platos.length <= 1) cerrar()
           }}
         />
       )}

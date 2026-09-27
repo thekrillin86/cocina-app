@@ -6,6 +6,7 @@ import {
   newItemId,
   findItem,
   countPending,
+  safeItemId,
 } from './shoppingList'
 
 const leche = { id: 'it_1', name: 'Leche', checked: false }
@@ -100,5 +101,35 @@ describe('newItemId', () => {
     for (let i = 0; i < 50; i++) {
       expect(newItemId()).toMatch(/^it_[a-z0-9_]+$/)
     }
+  })
+})
+
+describe('safeItemId', () => {
+  /* El identificador acaba siendo una clave dentro del documento, y
+     Firestore reserva unos cuantos caracteres en las rutas de campo.
+     El punto es el peligroso: no da error, parte la ruta. */
+  it('quita todo lo que no sea letra, número o guion bajo', () => {
+    expect(safeItemId('leche 1.5% materia grasa')).toBe('leche_1_5_materia_grasa')
+    expect(safeItemId('1/2 limon')).toBe('1_2_limon')
+    expect(safeItemId('aceite a.o.v.e')).toBe('aceite_a_o_v_e')
+    expect(safeItemId('pan 100% integral')).toBe('pan_100_integral')
+  })
+
+  it('no deja ningún carácter que rompa una ruta de campo', () => {
+    const peligrosos = ['a.b', 'a/b', 'a~b', 'a*b', 'a[b]', 'a b', 'a%b', 'á-é']
+    for (const t of peligrosos) {
+      expect(safeItemId(t)).toMatch(/^[a-zA-Z0-9_]+$/)
+    }
+  })
+
+  it('no deja guiones bajos sueltos al principio ni al final', () => {
+    expect(safeItemId('  hola  ')).toBe('hola')
+    expect(safeItemId('...hola...')).toBe('hola')
+  })
+
+  it('nunca devuelve vacío, que Firestore lo rechaza', () => {
+    expect(safeItemId('...')).toBe('x')
+    expect(safeItemId('')).toBe('x')
+    expect(safeItemId(null)).toBe('x')
   })
 })

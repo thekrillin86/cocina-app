@@ -4,6 +4,7 @@
 
 import { DAYS_ES, dateForDay, formatDayMonth } from './dates'
 import { asDishes } from './dishes'
+import { safeItemId } from './shoppingList'
 
 /* ============================================================
    NORMALIZACIÓN Y ALIASES PARA DEDUPLICACIÓN INTELIGENTE
@@ -538,7 +539,7 @@ export function extractItemsFromMenu(menu, wid) {
             const existing = seen.get(key)
             if (!existing) {
               seen.set(key, {
-                id: 'auto_' + key.replace(/\s+/g, '_'),
+                id: 'auto_' + safeItemId(key),
                 name: canonical,
                 quantity: parsed.quantity,
                 category: categorize(canonical),

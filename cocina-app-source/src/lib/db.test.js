@@ -8,15 +8,33 @@ const BORRA_CAMPO = { __borrar: true }
 
 vi.mock('../firebase', () => ({ db: {}, auth: {} }))
 
+class FieldPathFalso {
+  constructor(...segmentos) {
+    this.segmentos = segmentos
+  }
+  toString() {
+    return this.segmentos.join(' › ')
+  }
+}
+
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(),
   doc: (_db, coleccion, id) => ({ coleccion, id }),
+  FieldPath: FieldPathFalso,
   setDoc: (ref, datos) => {
     escrituras.push({ op: 'set', ref, datos })
     return Promise.resolve()
   },
-  updateDoc: (ref, datos) => {
-    escrituras.push({ op: 'update', ref, datos })
+  /* updateDoc admite dos formas: un objeto, o pares campo/valor
+     sueltos. Las escrituras por campo usan la segunda. */
+  updateDoc: (ref, ...args) => {
+    if (args.length === 1 && !(args[0] instanceof FieldPathFalso)) {
+      escrituras.push({ op: 'update', ref, datos: args[0], pares: null })
+    } else {
+      const pares = []
+      for (let i = 0; i < args.length; i += 2) pares.push([String(args[i]), args[i + 1]])
+      escrituras.push({ op: 'update', ref, datos: null, pares })
+    }
     return Promise.resolve()
   },
   deleteDoc: vi.fn(),
@@ -73,10 +91,9 @@ const listaArray = {
   ],
 }
 
-const soloCampos = (datos) => {
-  const { updatedAt, ...resto } = datos
-  return resto
-}
+/* Los pares [campo, valor] de una escritura, sin el updatedAt */
+const camposDe = (escritura) =>
+  Object.fromEntries((escritura.pares || []).filter(([campo]) => campo !== 'updatedAt'))
 
 describe('lista de la compra · escribe por campo, no la lista entera', () => {
   /* Esto es lo que hace que funcione sin cobertura. Una escritura de
@@ -87,12 +104,33 @@ describe('lista de la compra · escribe por campo, no la lista entera', () => {
   it('marcar un producto escribe solo su casilla', async () => {
     await toggleShoppingItem(listaMapa, 'it_1')
     expect(escrituras).toHaveLength(1)
-    expect(soloCampos(escrituras[0].datos)).toEqual({ 'items.it_1.checked': true })
+    expect(camposDe(escrituras[0])).toEqual({ 'items › it_1 › checked': true })
   })
 
   it('desmarcar también, mirando el estado que hay', async () => {
     await toggleShoppingItem(listaMapa, 'it_2')
-    expect(soloCampos(escrituras[0].datos)).toEqual({ 'items.it_2.checked': false })
+    expect(camposDe(escrituras[0])).toEqual({ 'items › it_2 › checked': false })
+  })
+
+  /* El fallo que dejaba productos sin poder marcar: escrito como
+     texto, `items.auto_leche_1.5%.checked` se partía por los puntos
+     y la casilla no se movía, sin error ninguno. Con FieldPath el
+     identificador va entero en su propio segmento. */
+  it('un identificador con punto no parte la ruta', async () => {
+    const lista = {
+      id: 'lidl',
+      items: { 'auto_leche_1.5%_materia_grasa': { id: 'auto_leche_1.5%_materia_grasa', checked: false } },
+    }
+    await toggleShoppingItem(lista, 'auto_leche_1.5%_materia_grasa')
+    const [[campo, valor]] = escrituras[0].pares.filter(([c]) => c !== 'updatedAt')
+    expect(campo).toBe('items › auto_leche_1.5%_materia_grasa › checked')
+    expect(valor).toBe(true)
+  })
+
+  it('un identificador con barra tampoco rompe', async () => {
+    const lista = { id: 'lidl', items: { 'auto_1/2_limon': { id: 'auto_1/2_limon', checked: false } } }
+    await toggleShoppingItem(lista, 'auto_1/2_limon')
+    expect(camposDe(escrituras[0])).toEqual({ 'items › auto_1/2_limon › checked': true })
   })
 
   it('marcar un producto que ya no está no escribe nada', async () => {
@@ -102,28 +140,28 @@ describe('lista de la compra · escribe por campo, no la lista entera', () => {
 
   it('editar escribe solo los campos que cambian', async () => {
     await updateShoppingItem(listaMapa, 'it_1', { name: 'Leche entera', quantity: '2 l' })
-    expect(soloCampos(escrituras[0].datos)).toEqual({
-      'items.it_1.name': 'Leche entera',
-      'items.it_1.quantity': '2 l',
+    expect(camposDe(escrituras[0])).toEqual({
+      'items › it_1 › name': 'Leche entera',
+      'items › it_1 › quantity': '2 l',
     })
   })
 
   it('añadir escribe solo el producto nuevo', async () => {
     const id = await addShoppingItem(listaMapa, { name: 'Sal', category: 'despensa' })
-    const campos = soloCampos(escrituras[0].datos)
-    expect(Object.keys(campos)).toEqual([`items.${id}`])
-    expect(campos[`items.${id}`]).toMatchObject({ id, name: 'Sal', checked: false })
+    const campos = camposDe(escrituras[0])
+    expect(Object.keys(campos)).toEqual([`items › ${id}`])
+    expect(campos[`items › ${id}`]).toMatchObject({ id, name: 'Sal', checked: false })
   })
 
   it('borrar un producto borra solo su campo', async () => {
     await removeShoppingItem(listaMapa, 'it_1')
-    expect(soloCampos(escrituras[0].datos)).toEqual({ 'items.it_1': BORRA_CAMPO })
+    expect(camposDe(escrituras[0])).toEqual({ 'items › it_1': BORRA_CAMPO })
   })
 
   it('borrar los comprados borra solo esos campos', async () => {
     const cuantos = await clearCheckedItems(listaMapa)
     expect(cuantos).toBe(1)
-    expect(soloCampos(escrituras[0].datos)).toEqual({ 'items.it_2': BORRA_CAMPO })
+    expect(camposDe(escrituras[0])).toEqual({ 'items › it_2': BORRA_CAMPO })
   })
 
   it('si no hay comprados no escribe nada', async () => {
@@ -134,9 +172,8 @@ describe('lista de la compra · escribe por campo, no la lista entera', () => {
 
   it('ninguna operación toca los demás productos', async () => {
     await toggleShoppingItem(listaMapa, 'it_1')
-    const datos = escrituras[0].datos
-    expect(JSON.stringify(datos)).not.toContain('Pan')
-    expect(datos).not.toHaveProperty('items')
+    expect(JSON.stringify(escrituras[0].pares)).not.toContain('Pan')
+    expect(escrituras[0].datos).toBeNull()
   })
 })
 
@@ -153,7 +190,7 @@ describe('lista de la compra · listas de antes, guardadas como array', () => {
       },
     })
     // Y encima, el cambio por campo
-    expect(soloCampos(escrituras[1].datos)).toEqual({ 'items.it_1.checked': true })
+    expect(camposDe(escrituras[1])).toEqual({ 'items › it_1 › checked': true })
   })
 
   it('una vez convertida ya no se vuelve a convertir', async () => {

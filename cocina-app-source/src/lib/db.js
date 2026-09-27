@@ -23,6 +23,7 @@ import {
   onSnapshot,
   query,
   deleteField,
+  FieldPath,
   writeBatch,
 } from 'firebase/firestore'
 import { db } from '../firebase'
@@ -188,25 +189,38 @@ async function asegurarMapa(list) {
   await updateDoc(refLista(list), { items: itemsToMap(asItems(list)) })
 }
 
-async function escribirCampos(list, campos) {
+/* Ruta al campo de un producto.
+
+   Con FieldPath cada segmento va suelto, así que el identificador se
+   toma tal cual. Escribiéndolo como texto —`items.${id}.checked`—
+   Firestore parte por los puntos, y un producto como
+   "Leche 1.5% materia grasa" acababa escribiendo en una rama que no
+   existía: la casilla no se movía y no saltaba ningún error. Los
+   caracteres '~', '*', '/', '[' y ']' directamente dan error.
+
+   Los productos nuevos ya llevan identificadores limpios, pero los
+   que hay guardados de antes no, y con esto se siguen pudiendo
+   tocar sin migrar nada. */
+const campoDe = (itemId, ...resto) => new FieldPath('items', itemId, ...resto)
+
+/* `pares` es una lista de [campo, valor] */
+async function escribirCampos(list, pares) {
+  if (!pares.length) return
   await asegurarMapa(list)
-  await updateDoc(refLista(list), { ...campos, updatedAt: ahora() })
+  await updateDoc(refLista(list), ...pares.flat(), 'updatedAt', ahora())
 }
 
 export async function addShoppingItem(list, item) {
   const id = item.id || newItemId()
-  await escribirCampos(list, {
-    [`items.${id}`]: { id, checked: false, quantity: null, recipes: [], ...item },
-  })
+  await escribirCampos(list, [
+    [campoDe(id), { id, checked: false, quantity: null, recipes: [], ...item }],
+  ])
   return id
 }
 
 export async function updateShoppingItem(list, itemId, cambios) {
-  const campos = {}
-  for (const [clave, valor] of Object.entries(cambios)) {
-    campos[`items.${itemId}.${clave}`] = valor
-  }
-  await escribirCampos(list, campos)
+  const pares = Object.entries(cambios).map(([clave, valor]) => [campoDe(itemId, clave), valor])
+  await escribirCampos(list, pares)
 }
 
 /* El estado nuevo sale del que hay en pantalla, que con la caché
@@ -214,21 +228,20 @@ export async function updateShoppingItem(list, itemId, cambios) {
 export async function toggleShoppingItem(list, itemId) {
   const item = findItem(list, itemId)
   if (!item) return
-  await escribirCampos(list, { [`items.${itemId}.checked`]: !item.checked })
+  await escribirCampos(list, [[campoDe(itemId, 'checked'), !item.checked]])
 }
 
 export async function removeShoppingItem(list, itemId) {
-  await escribirCampos(list, { [`items.${itemId}`]: deleteField() })
+  await escribirCampos(list, [[campoDe(itemId), deleteField()]])
 }
 
 export async function clearCheckedItems(list) {
-  const campos = {}
-  for (const it of asItems(list)) {
-    if (it.checked) campos[`items.${it.id}`] = deleteField()
-  }
-  if (!Object.keys(campos).length) return 0
-  await escribirCampos(list, campos)
-  return Object.keys(campos).length
+  const pares = asItems(list)
+    .filter((it) => it.checked)
+    .map((it) => [campoDe(it.id), deleteField()])
+  if (!pares.length) return 0
+  await escribirCampos(list, pares)
+  return pares.length
 }
 
 export async function clearAllItems(list) {

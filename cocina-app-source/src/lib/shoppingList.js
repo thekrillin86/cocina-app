@@ -63,3 +63,27 @@ export function findItem(list, itemId) {
 export function countPending(list) {
   return asItems(list).filter((it) => !it.checked).length
 }
+
+/* ============================================================
+   IDENTIFICADORES SEGUROS
+
+   El identificador de un producto se usa como clave dentro del
+   documento. Firestore reserva unos cuantos caracteres en las rutas
+   de campo: '~', '*', '/', '[' y ']' dan error, y el PUNTO es peor
+   todavía, porque parte la ruta en trozos sin avisar. Un producto
+   llamado "Leche 1.5% materia grasa" generaba
+   `auto_leche_1.5%_materia_grasa`, y marcarlo escribía en un sitio
+   que no existía: la casilla no se movía y no aparecía ningún error.
+
+   Los que se generan a partir del nombre pasan por aquí. Los que ya
+   estén guardados con un identificador raro se siguen pudiendo tocar,
+   porque al escribir se usa `FieldPath` con segmentos sueltos en vez
+   de una ruta con puntos.
+   ============================================================ */
+export function safeItemId(texto) {
+  const limpio = String(texto || '')
+    .replace(/[^a-zA-Z0-9_]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/(^_|_$)/g, '')
+  return limpio || 'x'
+}
